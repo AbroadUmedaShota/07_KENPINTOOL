@@ -1,19 +1,28 @@
 using System;
+using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
+using PdfiumViewer;
 
 namespace KenpinTool.Prototype.Services;
 
 public class ImageLoaderService : IDisposable
 {
+    private const int PdfRenderDpi = 240;
+
     private readonly Channel<LoadRequest> _loadChannel;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _processTask;
+    private PdfDocument? _cachedPdfDocument;
+    private string? _cachedPdfPath;
 
     public ImageLoaderService()
     {
@@ -27,7 +36,10 @@ public class ImageLoaderService : IDisposable
         _processTask = Task.Factory.StartNew(ProcessQueueAsync, TaskCreationOptions.LongRunning);
     }
 
-    public async Task<BitmapSource?> LoadImageAsync(string filePath, CancellationToken ct = default)
+    public Task<BitmapSource?> LoadImageAsync(string filePath, CancellationToken ct = default)
+        => LoadImageAsync(filePath, null, ct);
+
+    public async Task<BitmapSource?> LoadImageAsync(string filePath, int? pdfPageIndex, CancellationToken ct = default)
     {
         if (!File.Exists(filePath))
         {
@@ -35,7 +47,7 @@ public class ImageLoaderService : IDisposable
         }
 
         var tcs = new TaskCompletionSource<BitmapSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var request = new LoadRequest(filePath, tcs, ct);
+        var request = new LoadRequest(filePath, pdfPageIndex, tcs, ct);
 
         try
         {
@@ -71,20 +83,28 @@ public class ImageLoaderService : IDisposable
 
                     try
                     {
-                        // Load image using OpenCV
-                        using var mat = new Mat(request.FilePath, ImreadModes.Color);
-                        if (mat.Empty())
+                        if (request.PdfPageIndex.HasValue)
                         {
-                            request.CompletionSource.TrySetResult(null);
-                            continue;
+                            var pdfImage = RenderPdfPage(request.FilePath, request.PdfPageIndex.Value);
+                            request.CompletionSource.TrySetResult(pdfImage);
                         }
+                        else
+                        {
+                            // Load image using OpenCV
+                            using var mat = new Mat(request.FilePath, ImreadModes.Color);
+                            if (mat.Empty())
+                            {
+                                request.CompletionSource.TrySetResult(null);
+                                continue;
+                            }
 
-                        // Convert to WPF BitmapSource
-                        // We must Freeze it to allow it to be shared across threads (passed to UI thread)
-                        var bitmap = mat.ToBitmapSource();
-                        bitmap.Freeze();
+                            // Convert to WPF BitmapSource
+                            // We must Freeze it to allow it to be shared across threads (passed to UI thread)
+                            var bitmap = mat.ToBitmapSource();
+                            bitmap.Freeze();
 
-                        request.CompletionSource.TrySetResult(bitmap);
+                            request.CompletionSource.TrySetResult(bitmap);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -101,6 +121,10 @@ public class ImageLoaderService : IDisposable
         {
             // In a real app, log this
         }
+        finally
+        {
+            DisposeCachedPdfDocument();
+        }
     }
 
     public void Dispose()
@@ -109,5 +133,72 @@ public class ImageLoaderService : IDisposable
         _loadChannel.Writer.TryComplete();
     }
 
-    private record LoadRequest(string FilePath, TaskCompletionSource<BitmapSource?> CompletionSource, CancellationToken CancellationToken);
+    private BitmapSource? RenderPdfPage(string filePath, int pdfPageIndex)
+    {
+        var document = GetPdfDocument(filePath);
+        if (document is null)
+        {
+            return null;
+        }
+
+        var zeroBased = pdfPageIndex - 1;
+        if (zeroBased < 0 || zeroBased >= document.PageCount)
+        {
+            return null;
+        }
+
+        using var image = document.Render(zeroBased, PdfRenderDpi, PdfRenderDpi, true);
+        return ConvertToBitmapSource(image);
+    }
+
+    private PdfDocument? GetPdfDocument(string filePath)
+    {
+        if (_cachedPdfDocument is not null &&
+            string.Equals(_cachedPdfPath, filePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return _cachedPdfDocument;
+        }
+
+        DisposeCachedPdfDocument();
+
+        _cachedPdfDocument = PdfDocument.Load(filePath);
+        _cachedPdfPath = filePath;
+        return _cachedPdfDocument;
+    }
+
+    private void DisposeCachedPdfDocument()
+    {
+        _cachedPdfDocument?.Dispose();
+        _cachedPdfDocument = null;
+        _cachedPdfPath = null;
+    }
+
+    private static BitmapSource ConvertToBitmapSource(Image image)
+    {
+        using var bitmap = image as Bitmap ?? new Bitmap(image);
+        var hBitmap = bitmap.GetHbitmap();
+        try
+        {
+            var source = Imaging.CreateBitmapSourceFromHBitmap(
+                hBitmap,
+                IntPtr.Zero,
+                Int32Rect.Empty,
+                BitmapSizeOptions.FromEmptyOptions());
+            source.Freeze();
+            return source;
+        }
+        finally
+        {
+            DeleteObject(hBitmap);
+        }
+    }
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr hObject);
+
+    private record LoadRequest(
+        string FilePath,
+        int? PdfPageIndex,
+        TaskCompletionSource<BitmapSource?> CompletionSource,
+        CancellationToken CancellationToken);
 }

@@ -14,16 +14,22 @@ public sealed class PageItem : ObservableObject
 {
     private PageDecision? _decision;
 
-    public PageItem(int index, string filePath, IReadOnlyList<Detection> detections)
+    public PageItem(int index, string filePath, IReadOnlyList<Detection> detections, int? pdfPageIndex = null)
     {
         if (index <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(index));
         }
 
+        if (pdfPageIndex.HasValue && pdfPageIndex.Value <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pdfPageIndex));
+        }
+
         Index = index;
         FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
         FileName = Path.GetFileName(filePath);
+        PdfPageIndex = pdfPageIndex;
 
         Detections = new ObservableCollection<Detection>(detections ?? Array.Empty<Detection>());
         HookDetections(Detections);
@@ -33,6 +39,8 @@ public sealed class PageItem : ObservableObject
     public int Index { get; }
     public string FilePath { get; }
     public string FileName { get; }
+    public int? PdfPageIndex { get; }
+    public bool IsPdf => PdfPageIndex.HasValue;
 
     public ObservableCollection<Detection> Detections { get; }
 

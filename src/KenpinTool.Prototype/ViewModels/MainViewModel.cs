@@ -186,7 +186,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 return "";
             }
 
-            return $"Page {SelectedPage.Index:000}/{Pages.Count:000}  {SelectedPage.FileName}";
+            var pdfSuffix = SelectedPage.PdfPageIndex.HasValue
+                ? $" (PDF p{SelectedPage.PdfPageIndex:000})"
+                : "";
+            return $"Page {SelectedPage.Index:000}/{Pages.Count:000}  {SelectedPage.FileName}{pdfSuffix}";
         }
     }
 
@@ -281,10 +284,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var folderPath = InputFolderPath.Trim();
             await Task.Yield();
 
-            var files = await Task.Run(() => _caseLoader.LoadImageFiles(folderPath));
-            if (files.Count == 0)
+            var pageSources = await Task.Run(() => _caseLoader.LoadPages(folderPath));
+            if (pageSources.Count == 0)
             {
-                StatusMessage = "画像が見つかりませんでした。";
+                StatusMessage = "画像/PDFが見つかりませんでした。";
                 return;
             }
 
@@ -297,7 +300,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 inputFolderPath = _runContext.InputFolderPath,
                 openedAtUtc = DateTimeOffset.UtcNow,
                 ruleset = "prototype-v0",
-                pageCount = files.Count,
+                pageCount = pageSources.Count,
             };
             File.WriteAllText(
                 _runContext.CaseJsonPath,
@@ -308,12 +311,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             var pages = await Task.Run(() =>
             {
-                var result = new List<PageItem>(files.Count);
+                var result = new List<PageItem>(pageSources.Count);
                 var index = 1;
-                foreach (var file in files)
+                foreach (var source in pageSources)
                 {
-                    var detections = _dummyDetector.DetectFromFileName(file);
-                    result.Add(new PageItem(index, file, detections));
+                    var detections = _dummyDetector.DetectFromFileName(source.FilePath);
+                    result.Add(new PageItem(index, source.FilePath, detections, source.PdfPageIndex));
                     index++;
                 }
 
@@ -587,13 +590,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            var current = await _imageLoader.LoadImageAsync(page.FilePath, cts.Token);
+            var current = await _imageLoader.LoadImageAsync(page.FilePath, page.PdfPageIndex, cts.Token);
             CurrentImage = current;
 
             if (CompareMode && page.Index > 1)
             {
                 var prevPage = Pages.ElementAtOrDefault(page.Index - 2);
-                PreviousImage = prevPage is null ? null : await _imageLoader.LoadImageAsync(prevPage.FilePath, cts.Token);
+                PreviousImage = prevPage is null
+                    ? null
+                    : await _imageLoader.LoadImageAsync(prevPage.FilePath, prevPage.PdfPageIndex, cts.Token);
             }
             else
             {
