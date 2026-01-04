@@ -15,14 +15,12 @@
 
 実装時の正は以下（統合版の記載に従う）。
 
-- `doc/企画書.md`
-- `doc/要件定義書.md`
-- `doc/業務要件定義書.md`
-- `doc/機能要件定義書.md`
-- `doc/非機能要件定義書.md`
-- `doc/NG定義・判断基準マスタの具体化.md`
-- UI: `doc/デザイン要件定義書.md` / `doc/UI詳細設計書.md`
-- 技術・PoC: `doc/技術選定.md` / `doc/プロトタイプ計画.md`
+- [ドキュメント目次](doc/README.md)
+- 企画: `doc/01_企画/企画書.md`
+- 要件: `doc/02_要件/要件定義書.md` / `doc/02_要件/業務要件定義書.md` / `doc/02_要件/機能要件定義書.md` / `doc/02_要件/非機能要件定義書.md`
+- 統制: `doc/05_統制/NG定義・判断基準マスタの具体化.md`
+- UI: `doc/03_UI/デザイン要件定義書.md` / `doc/03_UI/UI詳細設計書.md`
+- 技術・PoC: `doc/04_技術/技術選定.md` / `doc/04_技術/プロトタイプ計画.md`
 
 ---
 
@@ -44,13 +42,15 @@
 3) 入出力（PDF/JPEG投入、CSV/レポート出力）  
 4) 検知アルゴリズム（Phase 1の対象コードから段階導入）
 
-詳細な実装順は `doc/プロトタイプ計画.md` と `doc/技術選定.md` を参照。
+詳細な実装順は `doc/04_技術/プロトタイプ計画.md` と `doc/04_技術/技術選定.md` を参照。
 
 ---
 
 ## 5. リポジトリ構成
 
-- `doc/`: 企画・要件・UI・技術選定・PoC計画
+- `doc/`: 企画・要件・UI・技術選定・PoC計画（目次: `doc/README.md`）
+- `project/`: 引継ぎ資料・テンプレート等の管理資産
+- `samples/`: サンプル入力（`samples/inputs/` はGit管理外）
 - `src/`: アプリ実装（現状はWPFプロトタイプを含む）
 - `tools/`: ローカル補助スクリプト（サンプル生成など）
 
@@ -72,8 +72,8 @@
 プロトタイプは `src/KenpinTool.Prototype` にあります。
 
 ```powershell
-python tools/generate_sample_images.py sample-data
-dotnet run --project src/KenpinTool.Prototype -- ".\\sample-data"
+python tools/generate_sample_images.py samples/inputs
+dotnet run --project src/KenpinTool.Prototype -- ".\\samples\\inputs"
 ```
 
 ---
@@ -104,7 +104,7 @@ dotnet run --project src/KenpinTool.Prototype -- ".\\sample-data"
 
 - **「何を決めたか」**（採用案/非採用案/理由）を短く残す（PR本文、または `doc/` に追記）。
 - UI/UX変更は、**操作手順（ショートカット含む）**と**制約（NG-A/QLT-05等）**がどう担保されるかを明記する。
-- PoC/プロトタイプでは「動くこと」だけでなく、`doc/プロトタイプ計画.md` の観点で **評価可能な形**（ログ/出力/再現手順）にする。
+- PoC/プロトタイプでは「動くこと」だけでなく、`doc/04_技術/プロトタイプ計画.md` の観点で **評価可能な形**（ログ/出力/再現手順）にする。
 
 ### 8.5 依頼の書き方（最短で進めるための情報）
 
