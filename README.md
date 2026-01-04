@@ -2,16 +2,17 @@
 
 ## ドキュメント
 
-- `doc/企画書.md`
-- `doc/要件定義書.md`
-- `doc/業務要件定義書.md`
-- `doc/機能要件定義書.md`
-- `doc/非機能要件定義書.md`
-- `doc/NG定義・判断基準マスタの具体化.md`
-- `doc/デザイン要件定義書.md`
-- `doc/UI詳細設計書.md`
-- `doc/技術選定.md`
-- `doc/プロトタイプ計画.md`
+- [ドキュメント目次](doc/README.md)
+- [企画書](doc/01_企画/企画書.md)
+- [要件定義書（統合）](doc/02_要件/要件定義書.md)
+- [業務要件定義書](doc/02_要件/業務要件定義書.md)
+- [機能要件定義書](doc/02_要件/機能要件定義書.md)
+- [非機能要件定義書](doc/02_要件/非機能要件定義書.md)
+- [NG定義・判断基準マスタの具体化](doc/05_統制/NG定義・判断基準マスタの具体化.md)
+- [デザイン要件定義書](doc/03_UI/デザイン要件定義書.md)
+- [UI詳細設計書](doc/03_UI/UI詳細設計書.md)
+- [技術選定](doc/04_技術/技術選定.md)
+- [プロトタイプ計画](doc/04_技術/プロトタイプ計画.md)
 
 ## プロトタイプ（WPF）
 
@@ -20,8 +21,8 @@
 ### 実行
 
 ```powershell
-python tools/generate_sample_images.py sample-data
-dotnet run --project src/KenpinTool.Prototype -- ".\\sample-data"
+python tools/generate_sample_images.py samples/inputs
+dotnet run --project src/KenpinTool.Prototype -- ".\\samples\\inputs"
 ```
 
 ### 入力

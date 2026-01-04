@@ -6,4 +6,4 @@
 *.userosscache
 *.sln.docstates
 .vs/
-sample-data/
+samples/inputs/
