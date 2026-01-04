@@ -1,0 +1,274 @@
+project:
+  name: 自動検品ツール
+  purpose: >
+    電子化業務における検品工程の属人化を解消し、
+    検品判断を人の経験・気質から切り離して
+    ルールベースで再現可能・説明可能な品質保証プロセスを構築する。
+
+background:
+  current_flow:
+    - Canon製スキャナ（例: G-1100シリーズ）でスキャン
+    - スキャン時点でPDF（画像PDF／検索可能PDF）まで生成済み
+    - その後工程として検品を実施
+  issues:
+    - 検品判断が担当者の経験・慎重さ・気質に依存
+    - 同一成果物でもOK/NG判断が人により異なる
+    - ページ抜け・欠け・線状ノイズなどの致命不良が見逃されるリスク
+    - 再スキャン要否の判断が遅く、迷いが生じる
+    - 判断根拠が残らず、監査・説明が困難
+
+core_principles:
+  - 属人化の原因はドキュメント種別ではなく「判断基準が暗黙知であること」
+  - 判断基準をツール側に外部化・強制適用する
+  - 人は「検知」や「判断」ではなく「確認・承認」のみを行う
+  - 完全自動化は目指さず、判断支援に徹する
+  - 裁量・主観・感覚による判断を排除する
+
+system_scope:
+  in_scope:
+    - PDF（画像PDF、検索可能PDF）
+    - JPEG画像（単ページ、連番）
+    - 行政文書・契約書
+    - 書籍・冊子類
+    - 図面・大判資料
+    - 写真・画像資料
+  out_of_scope:
+    - スキャナ制御
+    - スキャン設定変更
+    - 画像補正・修正処理
+    - OCR実行（結果の有無・品質チェックのみ対象）
+    - 再処理の自動実行（提案のみ）
+
+product_positioning:
+  role: 納品前の最終品質ゲート（Quality Gate）
+  objective:
+    - 致命不良の確実な検知
+    - 再スキャン判断の即時化
+    - 判断根拠の記録と説明可能性の確保
+
+judgement_model:
+  separation_of_roles:
+    tool:
+      - 不良候補の自動検知
+      - NGコード付与
+      - 重大度判定
+      - 案件合否の自動判定
+      - 疑い検知（末尾Sコード）の提示と確定支援
+    human:
+      - ツール結果の確認
+      - 承認または指定アクションの実行
+  decision_style:
+    - ルール適合 / 不適合
+    - Yes/Noの感覚判断は禁止
+
+ng_classification:
+  levels:
+    NG-A:
+      description: 致命不良
+      action: 再スキャン必須
+      exception_allowed: false
+    NG-B:
+      description: 要対応
+      action: 再処理または差替
+      exception_allowed: true
+    NG-C:
+      description: 注意
+      action: 目視確認の上で承認可
+      exception_allowed: true
+    OK:
+      description: 問題なし
+      action: 次工程へ
+  global_rule: NG-Aが1件でもあれば案件全体NG
+
+ng_master:
+  structure_related:
+    - code: STR-01S
+      name: ページ抜け疑い
+      condition: 画像特徴量＋連続性評価で不連続を検知（疑い）
+      level: NG-C
+      notes:
+        - OCR・ページ番号に依存しない
+        - 検品者が目視で確定できた場合のみSTR-01へ昇格
+    - code: STR-01
+      name: ページ抜け（確定）
+      condition: 検品者が目視でページ抜けを確定（STR-01Sから昇格）
+      level: NG-A
+    - code: STR-02
+      name: ページ重複
+      condition: 同一または高類似ページ検出
+      level: NG-A
+      notes:
+        - 画像類似度で確定しやすいためNG-A維持
+    - code: STR-03S
+      name: ページ順序異常疑い
+      condition: 画像特徴量＋連続性評価で順序違いを検知（疑い）
+      level: NG-C
+      notes:
+        - OCR・ページ番号に依存しない
+        - 検品者が目視で確定できた場合のみSTR-03へ昇格
+    - code: STR-03
+      name: ページ順序異常（確定）
+      condition: 検品者が目視でページ順序異常を確定（STR-03Sから昇格）
+      level: NG-A
+    - code: STR-04
+      name: ページ回転誤り
+      condition: 90度/180度回転
+      level: NG-B
+
+  trimming_related:
+    - code: CUT-01
+      name: 本文欠け
+      condition: 文字領域の欠損
+      level: NG-A
+    - code: CUT-02
+      name: 図枠欠け
+      condition: 図枠や注記の欠損
+      level: NG-A
+    - code: CUT-03
+      name: 端部余白不足
+      condition: 規定マージン未満
+      level: NG-B
+    - code: CUT-04
+      name: 過剰トリミング
+      condition: 必要余白の消失
+      level: NG-B
+
+  quality_related:
+    - code: QLT-01
+      name: ピンボケ
+      condition: エッジ鮮鋭度が閾値未満
+      level: NG-A
+    - code: QLT-02
+      name: 解像度不足
+      condition: 実効DPIが規定未満
+      level: NG-A
+    - code: QLT-03
+      name: 白飛び/黒潰れ
+      condition: 階調分布が極端
+      level: NG-B
+    - code: QLT-04
+      name: 影・写り込み
+      condition: 主要領域への影・物体
+      level: NG-B
+    - code: QLT-05
+      name: 線状ノイズ（縦線・横線）
+      condition: >
+        スキャナ機構由来の直線状欠陥。
+        高い直線性と一定長を持ち、
+        本文・図面・署名・寸法線を横断。
+      level: NG-A
+      notes:
+        - 再処理不可
+        - 例外承認不可
+        - 再スキャンのみ選択可
+
+  ocr_related:
+    - code: OCR-01
+      name: OCRなし
+      condition: テキストレイヤ不在
+      level: NG-B
+    - code: OCR-02
+      name: OCR抽出不可
+      condition: テキスト取得不能
+      level: NG-A
+    - code: OCR-03
+      name: OCR低信頼
+      condition: 信頼度メタなし、または信頼度スコアが閾値未満
+      level: NG-C
+    - code: OCR-04
+      name: OCRズレ
+      condition: 画像とテキスト位置乖離
+      level: NG-B
+
+  page_attribute_related:
+    - code: ATR-01
+      name: ページサイズ混在
+      condition: 規定外サイズ混在
+      level: NG-B
+    - code: ATR-02
+      name: 向き混在
+      condition: 縦横混在
+      level: NG-B
+    - code: ATR-03
+      name: 縮尺異常
+      condition: 図面比率破綻
+      level: NG-A
+
+  drawing_specific:
+    - code: DWG-01
+      name: 細線欠損
+      condition: 線の連続性破断
+      level: NG-A
+    - code: DWG-02
+      name: 圧縮劣化
+      condition: 圧縮により線潰れ
+      level: NG-B
+    - code: DWG-03
+      name: 分割結合ズレ
+      condition: 継ぎ目の段差・不連続
+      level: NG-A
+
+exception_rules:
+  allowed_for:
+    - NG-B
+    - NG-C
+  not_allowed_for:
+    - NG-A
+  requirements:
+    - 定型理由コード必須
+    - ログ永続保存
+
+result_contract:
+  required_fields:
+    suggested_action:
+      - RESCAN
+      - REWORK
+      - REVIEW
+      - OK
+    rework_type:
+      - ROTATE
+      - REORDER
+      - REOCR
+      - RECOMPRESS
+      - SPLIT_MERGE
+      - NONE
+  notes:
+    - 現フェーズではREWORKは提案のみ（実行は対象外）
+
+ui_requirements:
+  - 問題ページの重大度順表示
+  - NG箇所の強調表示
+  - 前後ページ比較
+  - STR-01S/STR-03Sは前後比較で確認し、確定（STR-01/STR-03）または解除を選択できる
+  - 大判図面向け高倍率ズーム/パン
+  - QLT-05検出時は「再スキャン」のみ選択可
+
+logging_and_audit:
+  - 判定日時
+  - 判定担当者
+  - NGコード
+  - 判定アクション
+  - suggested_action
+  - rework_type
+  - 疑い/確定ステータスと変更履歴（例: STR-01S→STR-01）
+  - 例外理由（該当時）
+  - 装置別・日別NG集計（特にQLT-05）
+
+non_functional:
+  performance:
+    - ページ単位並列処理
+    - 大判PDFでも操作遅延なし
+  security:
+    - 外部通信なし
+    - アクセス制御
+    - ログ改ざん防止
+  operations:
+    - 閉域/ローカル環境対応
+    - ルール変更は管理者のみ
+    - 案件処理中のルール変更禁止
+
+next_steps_candidates:
+  - NGコード別の検出アルゴリズム要件定義
+  - ルールエンジン詳細設計
+  - UIワイヤーフレーム設計
+  - PoC評価基準とテストデータ設計
