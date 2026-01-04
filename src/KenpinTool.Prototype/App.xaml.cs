@@ -24,6 +24,7 @@ public partial class App : Application
                 services.AddSingleton<ImageLoaderService>();
                 services.AddSingleton<CaseLoader>();
                 services.AddSingleton<DummyDetectionService>();
+                services.AddSingleton<QualityDetectionService>();
 
                 // ViewModels
                 services.AddTransient<MainViewModel>();

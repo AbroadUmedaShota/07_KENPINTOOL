@@ -7,6 +7,10 @@
         mc:Ignorable="d"
         Title="KenpinTool Prototype" Height="720" Width="1280">
     
+    <Window.Resources>
+        <DropShadowEffect x:Key="StatusShadow" BlurRadius="8" ShadowDepth="2" Opacity="0.6" />
+    </Window.Resources>
+
     <Window.InputBindings>
         <KeyBinding Key="J" Command="{Binding NextPageCommand}" />
         <KeyBinding Key="K" Command="{Binding PrevPageCommand}" />
@@ -53,7 +57,7 @@
                        HorizontalAlignment="Left" 
                        VerticalAlignment="Top" 
                        Margin="10" 
-                       Effect="{StaticResource {x:Static SystemParameters.DropShadowKey}}"/>
+                       Effect="{StaticResource StatusShadow}"/>
         </Grid>
 
         <!-- Right Pane: Controls -->

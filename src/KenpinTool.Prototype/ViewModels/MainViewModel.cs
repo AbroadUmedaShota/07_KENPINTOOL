@@ -29,6 +29,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly ImageLoaderService _imageLoader;
     private readonly CaseLoader _caseLoader;
     private readonly DummyDetectionService _dummyDetector;
+    private readonly QualityDetectionService _qualityDetector;
 
     private CancellationTokenSource? _imageLoadCts;
 
@@ -49,11 +50,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(
         ImageLoaderService imageLoader,
         CaseLoader caseLoader,
-        DummyDetectionService dummyDetector)
+        DummyDetectionService dummyDetector,
+        QualityDetectionService qualityDetector)
     {
         _imageLoader = imageLoader;
         _caseLoader = caseLoader;
         _dummyDetector = dummyDetector;
+        _qualityDetector = qualityDetector;
 
         PagesView = CollectionViewSource.GetDefaultView(Pages);
         PagesView.Filter = FilterPages;
@@ -315,7 +318,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var index = 1;
                 foreach (var source in pageSources)
                 {
-                    var detections = _dummyDetector.DetectFromFileName(source.FilePath);
+                    var detections = new List<Detection>(
+                        _dummyDetector
+                            .DetectFromFileName(source.FilePath)
+                            .Where(d => !d.IsQlT05));
+
+                    detections.AddRange(_qualityDetector.DetectQlT05(source.FilePath, source.PdfPageIndex));
                     result.Add(new PageItem(index, source.FilePath, detections, source.PdfPageIndex));
                     index++;
                 }
@@ -569,6 +577,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 tsUtc = decision.TimestampUtc,
                 exceptionReasonCode = decision.ExceptionReasonCode,
                 exceptionNote = decision.ExceptionNote,
+                pdfPageIndex = page.PdfPageIndex,
                 ngCodes = page.Detections.Select(d => d.Code).ToArray(),
             });
     }

@@ -21,6 +21,7 @@ public static class CsvExporter
         {
             "page_index",
             "file_name",
+            "pdf_page_index",
             "decision_action",
             "decision_ts_utc",
             "exception_reason_code",
@@ -47,6 +48,7 @@ public static class CsvExporter
             {
                 Escape(page.Index.ToString()),
                 Escape(page.FileName),
+                Escape(page.PdfPageIndex?.ToString() ?? ""),
                 Escape(decisionAction),
                 Escape(decisionTs),
                 Escape(excCode),
