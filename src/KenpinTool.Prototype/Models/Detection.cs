@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Windows.Media;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace KenpinTool.Prototype;
 
