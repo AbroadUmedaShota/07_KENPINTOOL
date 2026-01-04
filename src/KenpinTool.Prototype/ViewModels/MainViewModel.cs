@@ -11,6 +11,9 @@ using System.Threading.Tasks;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using KenpinTool.Prototype.Services;
 
 namespace KenpinTool.Prototype;
 
@@ -23,11 +26,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         "EXC-03: 仕様上許容",
     };
 
-    private readonly CaseLoader _caseLoader = new();
-    private readonly DummyDetectionService _dummyDetector = new();
-
-    private readonly Dictionary<string, BitmapSource> _imageCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly LinkedList<string> _imageCacheOrder = new();
+    private readonly ImageLoaderService _imageLoader;
+    private readonly CaseLoader _caseLoader;
+    private readonly DummyDetectionService _dummyDetector;
 
     private CancellationTokenSource? _imageLoadCts;
 
@@ -45,8 +46,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private BitmapSource? _currentImage;
     private BitmapSource? _previousImage;
 
-    public MainViewModel()
+    public MainViewModel(
+        ImageLoaderService imageLoader,
+        CaseLoader caseLoader,
+        DummyDetectionService dummyDetector)
     {
+        _imageLoader = imageLoader;
+        _caseLoader = caseLoader;
+        _dummyDetector = dummyDetector;
+
         PagesView = CollectionViewSource.GetDefaultView(Pages);
         PagesView.Filter = FilterPages;
 
@@ -94,7 +102,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         get => _statusMessage;
         private set => SetProperty(ref _statusMessage, value);
     }
-
 
     public bool ShowNgOnly
     {
@@ -216,17 +223,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string OutputDirectoryText
         => _runContext is null ? "" : $"Output: {_runContext.OutputDirectory}";
 
-    public System.Windows.Input.ICommand LoadCommand { get; }
-    public System.Windows.Input.ICommand NextPageCommand { get; }
-    public System.Windows.Input.ICommand PrevPageCommand { get; }
-    public System.Windows.Input.ICommand NextIssuePageCommand { get; }
-    public System.Windows.Input.ICommand MarkOkCommand { get; }
-    public System.Windows.Input.ICommand MarkRescanCommand { get; }
-    public System.Windows.Input.ICommand RequestExceptionCommand { get; }
-    public System.Windows.Input.ICommand ToggleCompareCommand { get; }
-    public System.Windows.Input.ICommand ToggleFilterCommand { get; }
-    public System.Windows.Input.ICommand ToggleZoomCommand { get; }
-    public System.Windows.Input.ICommand ExportCsvCommand { get; }
+    public IRelayCommand LoadCommand { get; }
+    public IRelayCommand NextPageCommand { get; }
+    public IRelayCommand PrevPageCommand { get; }
+    public IRelayCommand NextIssuePageCommand { get; }
+    public IRelayCommand MarkOkCommand { get; }
+    public IRelayCommand MarkRescanCommand { get; }
+    public IRelayCommand RequestExceptionCommand { get; }
+    public IRelayCommand ToggleCompareCommand { get; }
+    public IRelayCommand ToggleFilterCommand { get; }
+    public IRelayCommand ToggleZoomCommand { get; }
+    public IRelayCommand ExportCsvCommand { get; }
 
     public void Initialize(string? initialFolderPath)
     {
@@ -314,8 +321,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             });
 
             Pages.Clear();
-            _imageCache.Clear();
-            _imageCacheOrder.Clear();
 
             foreach (var p in pages)
             {
@@ -582,20 +587,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            var current = await LoadBitmapCachedAsync(page.FilePath, cts.Token);
+            var current = await _imageLoader.LoadImageAsync(page.FilePath, cts.Token);
             CurrentImage = current;
 
             if (CompareMode && page.Index > 1)
             {
                 var prevPage = Pages.ElementAtOrDefault(page.Index - 2);
-                PreviousImage = prevPage is null ? null : await LoadBitmapCachedAsync(prevPage.FilePath, cts.Token);
+                PreviousImage = prevPage is null ? null : await _imageLoader.LoadImageAsync(prevPage.FilePath, cts.Token);
             }
             else
             {
                 PreviousImage = null;
             }
 
-            BuildOverlays(page, current);
+            if (current != null)
+            {
+                BuildOverlays(page, current);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -604,40 +612,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             StatusMessage = $"Image load failed: {ex.Message}";
         }
-    }
-
-    private async Task<BitmapSource> LoadBitmapCachedAsync(string filePath, CancellationToken cancellationToken)
-    {
-        if (_imageCache.TryGetValue(filePath, out var cached))
-        {
-            return cached;
-        }
-
-        var loaded = await Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
-            image.UriSource = new Uri(filePath);
-            image.EndInit();
-            image.Freeze();
-            return (BitmapSource)image;
-        }, cancellationToken);
-
-        _imageCache[filePath] = loaded;
-        _imageCacheOrder.AddLast(filePath);
-
-        while (_imageCacheOrder.Count > 12)
-        {
-            var toRemove = _imageCacheOrder.First!.Value;
-            _imageCacheOrder.RemoveFirst();
-            _imageCache.Remove(toRemove);
-        }
-
-        return loaded;
     }
 
     private void BuildOverlays(PageItem page, BitmapSource image)
@@ -675,16 +649,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void UpdateCommandStates()
     {
-        ((RelayCommand)NextPageCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)PrevPageCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)NextIssuePageCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)MarkOkCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)MarkRescanCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)RequestExceptionCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)ToggleCompareCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)ToggleFilterCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)ToggleZoomCommand).NotifyCanExecuteChanged();
-        ((RelayCommand)ExportCsvCommand).NotifyCanExecuteChanged();
+        NextPageCommand.NotifyCanExecuteChanged();
+        PrevPageCommand.NotifyCanExecuteChanged();
+        NextIssuePageCommand.NotifyCanExecuteChanged();
+        MarkOkCommand.NotifyCanExecuteChanged();
+        MarkRescanCommand.NotifyCanExecuteChanged();
+        RequestExceptionCommand.NotifyCanExecuteChanged();
+        ToggleCompareCommand.NotifyCanExecuteChanged();
+        ToggleFilterCommand.NotifyCanExecuteChanged();
+        ToggleZoomCommand.NotifyCanExecuteChanged();
+        ExportCsvCommand.NotifyCanExecuteChanged();
     }
 
     private void DisposeRun()
