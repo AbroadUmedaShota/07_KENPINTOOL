@@ -1,0 +1,100 @@
+<Window x:Class="KenpinTool.Prototype.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:KenpinTool.Prototype.ViewModels"
+        mc:Ignorable="d"
+        Title="自動検品ツール Prototype" Height="720" Width="1280"
+        Background="#1E1E1E" Foreground="White">
+
+    <Window.InputBindings>
+        <KeyBinding Key="J" Command="{Binding NextCommand}" />
+        <KeyBinding Key="K" Command="{Binding PrevCommand}" />
+        <KeyBinding Key="Space" Command="{Binding ApproveCommand}" />
+    </Window.InputBindings>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Background="#2D2D2D" Padding="10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="自動検品ツール (PoC-0)" FontSize="18" FontWeight="Bold" Margin="0,0,20,0"/>
+                <Button Content="フォルダ読み込み" Command="{Binding LoadFolderCommand}" Padding="10,5"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="250"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left Pane: List -->
+            <Border BorderBrush="#3F3F3F" BorderThickness="0,0,1,0">
+                <ListView ItemsSource="{Binding Items}" 
+                          SelectedItem="{Binding SelectedItem}"
+                          Background="Transparent" BorderThickness="0"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="30"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding PageNumber}" VerticalAlignment="Center" Foreground="#AAAAAA"/>
+                                <TextBlock Grid.Column="1" Text="{Binding FileName}" Margin="10,0" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Width="12" Height="12" CornerRadius="6" 
+                                        Background="{Binding Status, Converter={StaticResource StatusToColorConverter}}"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+
+            <!-- Center Pane: Viewer -->
+            <Border Grid.Column="1" Background="Black">
+                <Image Source="{Binding CurrentImage}" Stretch="Uniform"/>
+            </Border>
+
+            <!-- Right Pane: Actions -->
+            <Border Grid.Column="2" BorderBrush="#3F3F3F" BorderThickness="1,0,0,0" Padding="20">
+                <StackPanel>
+                    <TextBlock Text="判定パネル" FontSize="16" FontWeight="Bold" Margin="0,0,0,20"/>
+                    
+                    <Border Background="#333333" Padding="10" CornerRadius="5">
+                        <StackPanel>
+                            <TextBlock Text="ページ情報" Foreground="#AAAAAA"/>
+                            <TextBlock Text="{Binding SelectedItem.FileName}" FontSize="14" FontWeight="Bold" Margin="0,5"/>
+                            <TextBlock Text="{Binding SelectedItem.Status, StringFormat='ステータス: {0}'}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Button Content="OK (Space)" Command="{Binding ApproveCommand}" 
+                            Background="#28A745" Foreground="White" 
+                            FontSize="16" FontWeight="Bold" Height="50" Margin="0,20,0,0"/>
+                    
+                    <TextBlock Text="ショートカット:" Margin="0,30,0,5" Foreground="#AAAAAA"/>
+                    <TextBlock Text="J: 次へ / K: 前へ / Space: OK"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Footer -->
+        <StatusBar Grid.Row="2" Background="#007ACC" Foreground="White">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
