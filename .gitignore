@@ -1,9 +1,60 @@
-# .NET
-**/bin/
-**/obj/
-*.user
+# =========================
+# Project Specific
+# =========================
+# 入力画像データ（サイズ大、機密情報の可能性）
+samples/inputs/*
+!samples/inputs/.gitkeep
+
+# ローカルデータベース・ログ
+*.sqlite
+*.db
+*.log
+*.log.*
+
+# ビルド成果物・配布パッケージ置き場
+artifacts/*
+!artifacts/.gitignore
+!artifacts/README.md
+
+# =========================
+# .NET / Visual Studio
+# =========================
+## Build Results
+[Bb]in/
+[Oo]bj/
+.vs/
+.vscode/
+# ※共有すべきVSCode設定がある場合は !.vscode/settings.json 等で除外解除するが、基本は個人設定のため無視
+
+## User-specific files
+*.rsuser
 *.suo
+*.user
 *.userosscache
 *.sln.docstates
-.vs/
-samples/inputs/
+
+## Test results
+TestResults/
+*.trx
+
+## NuGet
+packages/
+*.nupkg
+
+# =========================
+# Python (Tools)
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.spec
+
+# =========================
+# OS / System
+# =========================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
