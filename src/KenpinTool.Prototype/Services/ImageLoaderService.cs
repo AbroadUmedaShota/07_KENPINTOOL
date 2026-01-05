@@ -1,22 +1,19 @@
 using System;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Media.Imaging;
-using OpenCvSharp;
-using OpenCvSharp.WpfExtensions;
 using PdfiumViewer;
 
 namespace KenpinTool.Prototype.Services;
 
 public class ImageLoaderService : IDisposable
 {
-    private const int PdfRenderDpi = 240;
+    private const int PdfRenderDpi = 300;
 
     private readonly Channel<LoadRequest> _loadChannel;
     private readonly CancellationTokenSource _cts = new();
@@ -90,20 +87,8 @@ public class ImageLoaderService : IDisposable
                         }
                         else
                         {
-                            // Load image using OpenCV
-                            using var mat = new Mat(request.FilePath, ImreadModes.Color);
-                            if (mat.Empty())
-                            {
-                                request.CompletionSource.TrySetResult(null);
-                                continue;
-                            }
-
-                            // Convert to WPF BitmapSource
-                            // We must Freeze it to allow it to be shared across threads (passed to UI thread)
-                            var bitmap = mat.ToBitmapSource();
-                            bitmap.Freeze();
-
-                            request.CompletionSource.TrySetResult(bitmap);
+                            var image = LoadBitmapImage(request.FilePath);
+                            request.CompletionSource.TrySetResult(image);
                         }
                     }
                     catch (Exception ex)
@@ -173,28 +158,60 @@ public class ImageLoaderService : IDisposable
         _cachedPdfPath = null;
     }
 
-    private static BitmapSource ConvertToBitmapSource(Image image)
+    private static BitmapSource? LoadBitmapImage(string filePath)
+    {
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile;
+        bitmap.UriSource = new Uri(filePath, UriKind.Absolute);
+        bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    private static BitmapSource? ConvertToBitmapSource(Image image)
     {
         using var bitmap = image as Bitmap ?? new Bitmap(image);
-        var hBitmap = bitmap.GetHbitmap();
+        if (bitmap.PixelFormat != PixelFormat.Format32bppArgb)
+        {
+            using var converted = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb);
+            using var g = Graphics.FromImage(converted);
+            g.DrawImage(bitmap, 0, 0, bitmap.Width, bitmap.Height);
+            return CreateBitmapSource(converted);
+        }
+
+        return CreateBitmapSource(bitmap);
+    }
+
+    private static BitmapSource CreateBitmapSource(Bitmap bitmap)
+    {
+        var rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+        var data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
         {
-            var source = Imaging.CreateBitmapSourceFromHBitmap(
-                hBitmap,
-                IntPtr.Zero,
-                Int32Rect.Empty,
-                BitmapSizeOptions.FromEmptyOptions());
-            source.Freeze();
-            return source;
+            var size = Math.Abs(data.Stride) * bitmap.Height;
+            var buffer = new byte[size];
+            Marshal.Copy(data.Scan0, buffer, 0, size);
+
+            const double dpi = PdfRenderDpi;
+            var bitmapSource = BitmapSource.Create(
+                bitmap.Width,
+                bitmap.Height,
+                dpi,
+                dpi,
+                System.Windows.Media.PixelFormats.Bgra32,
+                null,
+                buffer,
+                data.Stride);
+            bitmapSource.Freeze();
+            return bitmapSource;
         }
         finally
         {
-            DeleteObject(hBitmap);
+            bitmap.UnlockBits(data);
         }
     }
-
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(IntPtr hObject);
 
     private record LoadRequest(
         string FilePath,

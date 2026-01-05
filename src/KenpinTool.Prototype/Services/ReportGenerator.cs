@@ -41,7 +41,7 @@ public sealed record ReportIssueItem(
 
 public sealed class ReportGenerator
 {
-    private const int RenderDpi = 220;
+    private const int RenderDpi = 300;
     private const int ThumbnailMaxWidth = 640;
     private const int ThumbnailMaxHeight = 640;
 

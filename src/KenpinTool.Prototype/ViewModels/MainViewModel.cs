@@ -68,6 +68,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _showNgOnly;
     private bool _compareMode;
     private double _zoom = 1.0;
+    private enum ZoomMode { Fit, Actual, Free }
+    private ZoomMode _zoomMode = ZoomMode.Fit;
+    private double _displayDpiX = 96.0;
+    private double _displayDpiY = 96.0;
+    private double _viewportWidth;
+    private double _viewportHeight;
+    private double _fitZoom = 1.0;
+    private double _actualZoom = 1.0;
+    private const double MinZoom = 0.1;
+    private const double MaxZoom = 8.0;
 
     private PageItem? _selectedPage;
     private BitmapSource? _currentImage;
@@ -107,6 +117,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ToggleCompareCommand = new RelayCommand(ToggleCompare, () => Pages.Count > 0 && !_isTextInputFocused);
         ToggleFilterCommand = new RelayCommand(ToggleFilter, () => Pages.Count > 0 && !_isTextInputFocused);
         ToggleZoomCommand = new RelayCommand(ToggleZoom, () => SelectedPage is not null && !_isTextInputFocused);
+        ZoomInCommand = new RelayCommand(() => AdjustZoom(1.1), () => SelectedPage is not null && !_isTextInputFocused);
+        ZoomOutCommand = new RelayCommand(() => AdjustZoom(1.0 / 1.1), () => SelectedPage is not null && !_isTextInputFocused);
         ExportCsvCommand = new RelayCommand(ExportCsv, () => Pages.Count > 0 && _runContext is not null);
         ExportReportCommand = new AsyncRelayCommand(ExportReportAsync, () => Pages.Count > 0 && _runContext is not null);
     }
@@ -274,6 +286,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IRelayCommand ToggleCompareCommand { get; }
     public IRelayCommand ToggleFilterCommand { get; }
     public IRelayCommand ToggleZoomCommand { get; }
+    public IRelayCommand ZoomInCommand { get; }
+    public IRelayCommand ZoomOutCommand { get; }
     public IRelayCommand ExportCsvCommand { get; }
     public IAsyncRelayCommand ExportReportCommand { get; }
 
@@ -295,6 +309,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _isTextInputFocused = isTextInputFocused;
         UpdateCommandStates();
+    }
+
+    public void UpdateDisplayDpi(double dpiX, double dpiY)
+    {
+        _displayDpiX = Math.Max(1.0, dpiX);
+        _displayDpiY = Math.Max(1.0, dpiY);
+        RecalculateZoomScales();
+    }
+
+    public void UpdateViewportSize(double width, double height)
+    {
+        _viewportWidth = Math.Max(0.0, width);
+        _viewportHeight = Math.Max(0.0, height);
+        RecalculateZoomScales();
     }
 
     public void ApplyExceptionDecision(string reasonCode, string? note)
@@ -619,7 +647,81 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void ToggleZoom()
     {
-        Zoom = Zoom >= 2.0 ? 1.0 : 2.0;
+        _zoomMode = _zoomMode == ZoomMode.Fit ? ZoomMode.Actual : ZoomMode.Fit;
+        ApplyZoomMode(_zoomMode);
+        var message = _zoomMode == ZoomMode.Actual ? "ズーム: 等倍表示" : "ズーム: フィット表示";
+        StatusMessage = BuildStatusMessage(message);
+    }
+
+    public void AdjustZoom(double factor)
+    {
+        if (SelectedPage is null || CurrentImage is null)
+        {
+            return;
+        }
+
+        if (double.IsNaN(factor) || factor <= 0)
+        {
+            return;
+        }
+
+        _zoomMode = ZoomMode.Free;
+        var target = Zoom * factor;
+        Zoom = Math.Clamp(target, MinZoom, MaxZoom);
+    }
+
+    private void ApplyZoomMode(ZoomMode mode)
+    {
+        if (mode == ZoomMode.Free)
+        {
+            return;
+        }
+
+        var target = mode == ZoomMode.Actual ? _actualZoom : _fitZoom;
+        if (double.IsNaN(target) || target <= 0)
+        {
+            target = 1.0;
+        }
+
+        Zoom = target;
+    }
+
+    private void RecalculateZoomScales()
+    {
+        var image = CurrentImage;
+        if (image is null)
+        {
+            _fitZoom = 1.0;
+            _actualZoom = 1.0;
+            ApplyZoomMode(_zoomMode);
+            return;
+        }
+
+        var dpiX = Math.Max(1.0, image.DpiX);
+        var dpiY = Math.Max(1.0, image.DpiY);
+        var imageWidthDip = image.PixelWidth * (96.0 / dpiX);
+        var imageHeightDip = image.PixelHeight * (96.0 / dpiY);
+
+        var widthScale = _viewportWidth > 0 && imageWidthDip > double.Epsilon
+            ? _viewportWidth / imageWidthDip
+            : 1.0;
+        var heightScale = _viewportHeight > 0 && imageHeightDip > double.Epsilon
+            ? _viewportHeight / imageHeightDip
+            : 1.0;
+
+        var fitScale = Math.Min(widthScale, heightScale);
+        if (fitScale <= 0)
+        {
+            fitScale = 1.0;
+        }
+
+        _fitZoom = Math.Max(MinZoom, fitScale);
+        _actualZoom = Math.Max(MinZoom, dpiX / 96.0);
+
+        if (_zoomMode != ZoomMode.Free)
+        {
+            ApplyZoomMode(_zoomMode);
+        }
     }
 
     private void ExportCsv()
@@ -767,6 +869,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var current = await _imageLoader.LoadImageAsync(page.FilePath, page.PdfPageIndex, cts.Token);
             CurrentImage = current;
+            RecalculateZoomScales();
 
             if (CompareMode && page.Index > 1)
             {
@@ -838,6 +941,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ToggleCompareCommand.NotifyCanExecuteChanged();
         ToggleFilterCommand.NotifyCanExecuteChanged();
         ToggleZoomCommand.NotifyCanExecuteChanged();
+        ZoomInCommand.NotifyCanExecuteChanged();
+        ZoomOutCommand.NotifyCanExecuteChanged();
         ExportCsvCommand.NotifyCanExecuteChanged();
         ExportReportCommand.NotifyCanExecuteChanged();
     }

@@ -14,6 +14,11 @@
     <Window.InputBindings>
         <KeyBinding Key="J" Command="{Binding NextPageCommand}" />
         <KeyBinding Key="K" Command="{Binding PrevPageCommand}" />
+        <KeyBinding Key="Z" Command="{Binding ToggleZoomCommand}" />
+        <KeyBinding Key="Add" Modifiers="Control" Command="{Binding ZoomInCommand}" />
+        <KeyBinding Key="OemPlus" Modifiers="Control" Command="{Binding ZoomInCommand}" />
+        <KeyBinding Key="Subtract" Modifiers="Control" Command="{Binding ZoomOutCommand}" />
+        <KeyBinding Key="OemMinus" Modifiers="Control" Command="{Binding ZoomOutCommand}" />
     </Window.InputBindings>
     
     <Grid>
@@ -41,14 +46,25 @@
         </Border>
 
         <!-- Center Pane: Image Viewer -->
-        <Grid Grid.Column="1" Background="#222" ClipToBounds="True">
-            <Image Source="{Binding CurrentImage}" 
-                   RenderOptions.BitmapScalingMode="NearestNeighbor" 
-                   Stretch="Uniform">
-                <Image.LayoutTransform>
-                    <ScaleTransform ScaleX="{Binding Zoom}" ScaleY="{Binding Zoom}" />
-                </Image.LayoutTransform>
-            </Image>
+        <Grid Grid.Column="1" Background="#222" ClipToBounds="True" SnapsToDevicePixels="True" UseLayoutRounding="True">
+            <ScrollViewer x:Name="ImageScrollHost"
+                          Background="#222"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"
+                          PanningMode="Both"
+                          SizeChanged="ImageScrollHost_SizeChanged"
+                          PreviewMouseWheel="ImageScrollHost_PreviewMouseWheel">
+                <Image Source="{Binding CurrentImage}"
+                       Stretch="None"
+                       StretchDirection="Both"
+                       RenderOptions.BitmapScalingMode="HighQuality"
+                       SnapsToDevicePixels="True"
+                       UseLayoutRounding="True">
+                    <Image.LayoutTransform>
+                        <ScaleTransform ScaleX="{Binding Zoom}" ScaleY="{Binding Zoom}" />
+                    </Image.LayoutTransform>
+                </Image>
+            </ScrollViewer>
             
             <!-- Simple Overlay for status -->
             <TextBlock Text="{Binding SelectedDecisionText}" 
@@ -79,13 +95,13 @@
             <Button Content="OK（問題なし）" Command="{Binding MarkOkCommand}" Margin="0,5" Padding="10" Background="LightGreen"/>
             <Button Content="再スキャン（NG-A）" Command="{Binding MarkRescanCommand}" Margin="0,5" Padding="10" Background="LightYellow"/>
             <Button Content="例外承認（NG-B/C）" Command="{Binding RequestExceptionCommand}" Margin="0,5" Padding="10" Background="LightPink"/>
-            <TextBlock Text="ショートカット: J/K=上下, Space=OK" FontSize="12" Foreground="Gray" Margin="0,2,0,10"/>
+            <TextBlock Text="ショートカット: J/K=上下, Z=等倍/フィット, Ctrl+ホイール/+/−=ズーム, Space=OK" FontSize="12" Foreground="Gray" Margin="0,2,0,10"/>
 
             <Separator Margin="0,20" />
             
             <CheckBox Content="NG/疑いのみ表示" IsChecked="{Binding ShowNgOnly}" Command="{Binding ToggleFilterCommand}" Margin="0,5"/>
             <CheckBox Content="比較モード" IsChecked="{Binding CompareMode}" Command="{Binding ToggleCompareCommand}" Margin="0,5"/>
-            <Button Content="拡大/縮小 (x1/x2)" Command="{Binding ToggleZoomCommand}" Margin="0,5"/>
+            <Button Content="表示モード切替 (Z)" Command="{Binding ToggleZoomCommand}" Margin="0,5"/>
             
             <Separator Margin="0,20" />
             <Button Content="Export CSV" Command="{Binding ExportCsvCommand}" Margin="0,5"/>

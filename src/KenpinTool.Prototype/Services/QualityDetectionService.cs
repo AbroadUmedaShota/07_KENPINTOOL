@@ -9,7 +9,7 @@ namespace KenpinTool.Prototype.Services;
 
 public sealed class QualityDetectionService
 {
-    private const int RenderDpi = 240;
+    private const int RenderDpi = 300;
     private const double MinLineLengthRatio = 0.55;
     private const int MaxEvidenceCount = 8;
     private const double AngleToleranceDeg = 5.0;
