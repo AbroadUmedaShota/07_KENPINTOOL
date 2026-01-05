@@ -3,6 +3,7 @@ using KenpinTool.Prototype.Services;
 using KenpinTool.Prototype.Views;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using QuestPDF.Infrastructure;
 
 namespace KenpinTool.Prototype;
 
@@ -17,6 +18,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        QuestPDF.Settings.License = LicenseType.Community;
+
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
@@ -25,6 +28,8 @@ public partial class App : Application
                 services.AddSingleton<CaseLoader>();
                 services.AddSingleton<DummyDetectionService>();
                 services.AddSingleton<QualityDetectionService>();
+                services.AddSingleton<StructureDetectionService>();
+                services.AddSingleton<ReportGenerator>();
 
                 // ViewModels
                 services.AddTransient<MainViewModel>();

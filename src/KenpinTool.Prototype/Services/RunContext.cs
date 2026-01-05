@@ -9,7 +9,9 @@ public sealed record RunContext(
     string OutputDirectory,
     string AuditLogPath,
     string CsvPath,
-    string CaseJsonPath
+    string CaseJsonPath,
+    string DbPath,
+    string DbFallbackPath
 )
 {
     public static RunContext Create(string inputFolderPath)
@@ -25,6 +27,8 @@ public sealed record RunContext(
         var runDirName = $"{DateTimeOffset.UtcNow:yyyyMMdd_HHmmss}_{safeCaseName}";
         var outputDir = Path.Combine(baseDir, runDirName);
         Directory.CreateDirectory(outputDir);
+        var dbPath = Path.Combine(inputFolderPath, "kenpin.db");
+        var fallbackDbPath = Path.Combine(outputDir, "kenpin.db");
 
         return new RunContext(
             CaseName: caseName,
@@ -32,7 +36,9 @@ public sealed record RunContext(
             OutputDirectory: outputDir,
             AuditLogPath: Path.Combine(outputDir, "audit.jsonl"),
             CsvPath: Path.Combine(outputDir, "result.csv"),
-            CaseJsonPath: Path.Combine(outputDir, "case.json"));
+            CaseJsonPath: Path.Combine(outputDir, "case.json"),
+            DbPath: dbPath,
+            DbFallbackPath: fallbackDbPath);
     }
 }
 

@@ -60,7 +60,7 @@ public static class CsvExporter
             }));
         }
 
-        File.WriteAllText(csvPath, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        File.WriteAllText(csvPath, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
 
     private static string Escape(string value)

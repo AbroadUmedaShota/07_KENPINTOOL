@@ -151,6 +151,28 @@ public sealed class PageItem : ObservableObject
         Decision = new PageDecision(DecisionAction.Ok, DateTimeOffset.UtcNow);
     }
 
+    public void RestoreDecision(PageDecision decision)
+    {
+        if (decision is null)
+        {
+            throw new ArgumentNullException(nameof(decision));
+        }
+
+        if (decision.Action == DecisionAction.Ok || decision.Action == DecisionAction.ExceptionApproved)
+        {
+            foreach (var detection in Detections)
+            {
+                detection.IsActive = false;
+            }
+        }
+        else if (decision.Action == DecisionAction.Rescan)
+        {
+            EscalateSuspicionCodes();
+        }
+
+        Decision = decision;
+    }
+
     public void ApplyRescan()
     {
         EscalateSuspicionCodes();

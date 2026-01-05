@@ -7,7 +7,9 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -30,11 +32,35 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly CaseLoader _caseLoader;
     private readonly DummyDetectionService _dummyDetector;
     private readonly QualityDetectionService _qualityDetector;
+    private readonly StructureDetectionService _structureDetector;
+    private readonly ReportGenerator _reportGenerator;
+    private readonly object _hashLock = new();
+    private readonly List<PageHash> _pageHashes = new();
+
+    private const double DuplicateSimilarityThreshold = 0.95;
+    private bool _isTextInputFocused;
+    private readonly Channel<DetectionRequest> _detectChannel;
+    private readonly CancellationTokenSource _detectCts = new();
+    private readonly Task _detectTask;
+    private readonly SynchronizationContext? _uiContext;
 
     private CancellationTokenSource? _imageLoadCts;
+    private CancellationTokenSource? _analysisCts;
+    private int _analysisTotal;
+    private int _analysisCompleted;
+    private int _analysisRunId;
+    private DateTimeOffset _lastPagesRefresh = DateTimeOffset.MinValue;
+    private int _pendingRefreshCount;
+
+    private const int PagesRefreshBatchSize = 10;
+    private const int PagesRefreshMinIntervalMs = 250;
 
     private RunContext? _runContext;
     private AuditLogWriter? _auditLog;
+    private DatabaseService? _database;
+    private int _caseId;
+    private readonly Dictionary<int, int> _pageIdByIndex = new();
+    private string _dbLocationLabel = "";
 
     private string _inputFolderPath = "";
     private string _caseName = "";
@@ -51,12 +77,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ImageLoaderService imageLoader,
         CaseLoader caseLoader,
         DummyDetectionService dummyDetector,
-        QualityDetectionService qualityDetector)
+        QualityDetectionService qualityDetector,
+        StructureDetectionService structureDetector,
+        ReportGenerator reportGenerator)
     {
         _imageLoader = imageLoader;
         _caseLoader = caseLoader;
         _dummyDetector = dummyDetector;
         _qualityDetector = qualityDetector;
+        _structureDetector = structureDetector;
+        _reportGenerator = reportGenerator;
+        _uiContext = SynchronizationContext.Current;
+
+        _detectChannel = Channel.CreateUnbounded<DetectionRequest>();
+        _detectTask = Task.Run(ProcessDetectionQueueAsync);
 
         PagesView = CollectionViewSource.GetDefaultView(Pages);
         PagesView.Filter = FilterPages;
@@ -64,16 +98,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _zoomTransform = new ScaleTransform(_zoom, _zoom);
 
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => !string.IsNullOrWhiteSpace(InputFolderPath));
-        NextPageCommand = new RelayCommand(NextPage, () => Pages.Count > 0);
-        PrevPageCommand = new RelayCommand(PrevPage, () => Pages.Count > 0);
-        NextIssuePageCommand = new RelayCommand(NextIssuePage, () => Pages.Count > 0);
+        NextPageCommand = new RelayCommand(NextPage, () => Pages.Count > 0 && !_isTextInputFocused);
+        PrevPageCommand = new RelayCommand(PrevPage, () => Pages.Count > 0 && !_isTextInputFocused);
+        NextIssuePageCommand = new RelayCommand(NextIssuePage, () => Pages.Count > 0 && !_isTextInputFocused);
         MarkOkCommand = new RelayCommand(MarkOk, CanMarkOk);
-        MarkRescanCommand = new RelayCommand(MarkRescan, () => SelectedPage is not null);
+        MarkRescanCommand = new RelayCommand(MarkRescan, () => SelectedPage is not null && !_isTextInputFocused);
         RequestExceptionCommand = new RelayCommand(RequestException, CanRequestException);
-        ToggleCompareCommand = new RelayCommand(ToggleCompare, () => Pages.Count > 0);
-        ToggleFilterCommand = new RelayCommand(ToggleFilter, () => Pages.Count > 0);
-        ToggleZoomCommand = new RelayCommand(ToggleZoom, () => SelectedPage is not null);
+        ToggleCompareCommand = new RelayCommand(ToggleCompare, () => Pages.Count > 0 && !_isTextInputFocused);
+        ToggleFilterCommand = new RelayCommand(ToggleFilter, () => Pages.Count > 0 && !_isTextInputFocused);
+        ToggleZoomCommand = new RelayCommand(ToggleZoom, () => SelectedPage is not null && !_isTextInputFocused);
         ExportCsvCommand = new RelayCommand(ExportCsv, () => Pages.Count > 0 && _runContext is not null);
+        ExportReportCommand = new AsyncRelayCommand(ExportReportAsync, () => Pages.Count > 0 && _runContext is not null);
     }
 
     public event EventHandler<ExceptionDialogRequest>? ExceptionDialogRequested;
@@ -240,6 +275,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IRelayCommand ToggleFilterCommand { get; }
     public IRelayCommand ToggleZoomCommand { get; }
     public IRelayCommand ExportCsvCommand { get; }
+    public IAsyncRelayCommand ExportReportCommand { get; }
 
     public void Initialize(string? initialFolderPath)
     {
@@ -248,6 +284,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             InputFolderPath = initialFolderPath;
             _ = LoadAsync();
         }
+    }
+
+    public void UpdateTextInputFocus(bool isTextInputFocused)
+    {
+        if (_isTextInputFocused == isTextInputFocused)
+        {
+            return;
+        }
+
+        _isTextInputFocused = isTextInputFocused;
+        UpdateCommandStates();
     }
 
     public void ApplyExceptionDecision(string reasonCode, string? note)
@@ -265,6 +312,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         SelectedPage.ApplyException(reasonCode, note);
         AppendDecisionLog(SelectedPage);
+        PersistDecision(SelectedPage);
 
         OnPropertyChanged(nameof(SelectedDecisionText));
         OnPropertyChanged(nameof(ProgressText));
@@ -280,7 +328,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         try
         {
-            StatusMessage = "Loading...";
+            StatusMessage = "ロード中...";
 
             DisposeRun();
 
@@ -296,6 +344,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             _runContext = RunContext.Create(folderPath);
             _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
+            _database = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
+            _database.Initialize();
+            _dbLocationLabel = _database.IsFallback ? "出力フォルダ" : "入力フォルダ";
+            _caseId = _database.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
 
             var caseMeta = new
             {
@@ -308,7 +360,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             File.WriteAllText(
                 _runContext.CaseJsonPath,
                 JsonSerializer.Serialize(caseMeta, new JsonSerializerOptions { WriteIndented = true }),
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 
             _auditLog.Append("case_opened", caseMeta);
 
@@ -318,13 +370,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var index = 1;
                 foreach (var source in pageSources)
                 {
-                    var detections = new List<Detection>(
-                        _dummyDetector
-                            .DetectFromFileName(source.FilePath)
-                            .Where(d => !d.IsQlT05));
-
-                    detections.AddRange(_qualityDetector.DetectQlT05(source.FilePath, source.PdfPageIndex));
-                    result.Add(new PageItem(index, source.FilePath, detections, source.PdfPageIndex));
+                    result.Add(new PageItem(index, source.FilePath, Array.Empty<Detection>(), source.PdfPageIndex));
                     index++;
                 }
 
@@ -338,8 +384,36 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Pages.Add(p);
             }
 
+            _pageIdByIndex.Clear();
+            foreach (var kvp in _database.UpsertPages(_caseId, pages))
+            {
+                _pageIdByIndex[kvp.Key] = kvp.Value;
+            }
+
+            var detectionsMap = _database.LoadDetections(_caseId);
+            var decisionsMap = _database.LoadDecisions(_caseId);
+            var pagesToAnalyze = new List<PageItem>();
+
+            foreach (var page in pages)
+            {
+                if (detectionsMap.TryGetValue(page.Index, out var detections))
+                {
+                    SetDetections(page, detections);
+                }
+
+                if (decisionsMap.TryGetValue(page.Index, out var decision))
+                {
+                    page.RestoreDecision(decision);
+                }
+
+                if (!detectionsMap.ContainsKey(page.Index) && !page.IsReviewed)
+                {
+                    pagesToAnalyze.Add(page);
+                }
+            }
+
             CaseName = _runContext.CaseName;
-            StatusMessage = $"Loaded {Pages.Count} pages.";
+            StatusMessage = BuildStatusMessage($"読み込み完了: {Pages.Count}ページ");
 
             OnPropertyChanged(nameof(ProgressText));
             OnPropertyChanged(nameof(PageCountText));
@@ -347,10 +421,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             SelectedPage = Pages.FirstOrDefault();
             UpdateCommandStates();
+
+            StartAnalysis(pagesToAnalyze);
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Error: {ex.Message}";
+            StatusMessage = $"エラー: {ex.Message}";
         }
     }
 
@@ -437,12 +513,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private bool CanMarkOk()
     {
+        if (_isTextInputFocused)
+        {
+            return false;
+        }
+
         if (SelectedPage is null)
         {
             return false;
         }
 
-        return !SelectedPage.HasQlT05ActiveDetections;
+        return !SelectedPage.HasFatalActiveDetections;
     }
 
     private void MarkOk()
@@ -452,14 +533,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (SelectedPage.HasQlT05ActiveDetections)
+        if (SelectedPage.HasFatalActiveDetections)
         {
-            StatusMessage = "QLT-05は再スキャンのみ選択可能です。";
+            StatusMessage = "NG-Aは再スキャンのみ選択可能です。";
             return;
         }
 
         SelectedPage.ApplyOk();
         AppendDecisionLog(SelectedPage);
+        PersistDecision(SelectedPage);
 
         OnPropertyChanged(nameof(SelectedDecisionText));
         OnPropertyChanged(nameof(ProgressText));
@@ -480,6 +562,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         SelectedPage.ApplyRescan();
         AppendDecisionLog(SelectedPage);
+        PersistDecision(SelectedPage);
 
         OnPropertyChanged(nameof(SelectedDecisionText));
         OnPropertyChanged(nameof(ProgressText));
@@ -493,6 +576,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private bool CanRequestException()
     {
+        if (_isTextInputFocused)
+        {
+            return false;
+        }
+
         if (SelectedPage is null)
         {
             return false;
@@ -520,13 +608,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void ToggleCompare()
     {
         CompareMode = !CompareMode;
-        StatusMessage = CompareMode ? "Compare: ON" : "Compare: OFF";
+        StatusMessage = CompareMode ? "比較モード: ON" : "比較モード: OFF";
     }
 
     private void ToggleFilter()
     {
         ShowNgOnly = !ShowNgOnly;
-        StatusMessage = ShowNgOnly ? "Filter: NG/疑いのみ" : "Filter: All";
+        StatusMessage = ShowNgOnly ? "絞り込み: NG/疑いのみ" : "絞り込み: 全て";
     }
 
     private void ToggleZoom()
@@ -546,12 +634,90 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             CsvExporter.Export(_runContext.CsvPath, Pages);
             _auditLog?.Append("csv_exported", new { csvPath = _runContext.CsvPath });
-            StatusMessage = $"CSV exported: {_runContext.CsvPath}";
+            StatusMessage = $"CSV出力完了: {_runContext.CsvPath}";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"CSV export failed: {ex.Message}";
+            StatusMessage = $"CSV出力に失敗しました: {ex.Message}";
         }
+    }
+
+    private async Task ExportReportAsync()
+    {
+        if (_runContext is null)
+        {
+            StatusMessage = "案件が未ロードです。";
+            return;
+        }
+
+        try
+        {
+            var metadata = BuildReportMetadata();
+            var issueItems = BuildReportIssues();
+            var outputPath = Path.Combine(_runContext.OutputDirectory, "report.pdf");
+
+            StatusMessage = BuildStatusMessage("レポート生成中...");
+
+            await Task.Run(() => _reportGenerator.Generate(outputPath, metadata, issueItems));
+
+            _auditLog?.Append("report_exported", new { reportPath = outputPath, issueCount = issueItems.Count });
+            StatusMessage = $"レポート出力完了: {outputPath}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"レポート出力に失敗しました: {ex.Message}";
+        }
+    }
+
+    private ReportMetadata BuildReportMetadata()
+    {
+        var okCount = Pages.Count(p => p.Decision?.Action == DecisionAction.Ok);
+        var rescanCount = Pages.Count(p => p.Decision?.Action == DecisionAction.Rescan);
+        var exceptionCount = Pages.Count(p => p.Decision?.Action == DecisionAction.ExceptionApproved);
+        var unreviewedCount = Pages.Count - okCount - rescanCount - exceptionCount;
+
+        var version = typeof(MainViewModel).Assembly.GetName().Version?.ToString() ?? "unknown";
+
+        return new ReportMetadata(
+            CaseName,
+            _runContext?.InputFolderPath ?? "",
+            DateTimeOffset.Now,
+            version,
+            Pages.Count,
+            okCount,
+            rescanCount,
+            exceptionCount,
+            unreviewedCount);
+    }
+
+    private List<ReportIssueItem> BuildReportIssues()
+    {
+        var items = new List<ReportIssueItem>();
+
+        foreach (var page in Pages)
+        {
+            if (page.Decision?.Action is not DecisionAction.Rescan and not DecisionAction.ExceptionApproved)
+            {
+                continue;
+            }
+
+            var detections = page.Detections
+                .Select(d => new ReportDetection(d.Code, d.Level, d.Evidence.ToArray()))
+                .ToList();
+
+            items.Add(
+                new ReportIssueItem(
+                    page.Index,
+                    page.FilePath,
+                    page.FileName,
+                    page.PdfPageIndex,
+                    page.Decision.Action,
+                    page.Decision.ExceptionReasonCode,
+                    page.Decision.ExceptionNote,
+                    detections));
+        }
+
+        return items;
     }
 
     private void AppendDecisionLog(PageItem page)
@@ -624,7 +790,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Image load failed: {ex.Message}";
+            StatusMessage = $"画像の読み込みに失敗しました: {ex.Message}";
         }
     }
 
@@ -673,6 +839,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ToggleFilterCommand.NotifyCanExecuteChanged();
         ToggleZoomCommand.NotifyCanExecuteChanged();
         ExportCsvCommand.NotifyCanExecuteChanged();
+        ExportReportCommand.NotifyCanExecuteChanged();
     }
 
     private void DisposeRun()
@@ -682,10 +849,270 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _runContext = null;
         CaseName = "";
         OnPropertyChanged(nameof(OutputDirectoryText));
+        _analysisCts?.Cancel();
+        _analysisCts?.Dispose();
+        _analysisCts = null;
+        _analysisTotal = 0;
+        _analysisCompleted = 0;
+        _database = null;
+        _caseId = 0;
+        _pageIdByIndex.Clear();
+        _dbLocationLabel = "";
+        lock (_hashLock)
+        {
+            _pageHashes.Clear();
+        }
     }
 
     public void Dispose()
     {
         DisposeRun();
+        _detectCts.Cancel();
+        _detectChannel.Writer.TryComplete();
     }
+
+    private void StartAnalysis(IReadOnlyList<PageItem> pages)
+    {
+        _analysisCts?.Cancel();
+        _analysisCts?.Dispose();
+        _analysisCts = new CancellationTokenSource();
+
+        var runId = Interlocked.Increment(ref _analysisRunId);
+        _analysisTotal = pages.Count;
+        _analysisCompleted = 0;
+        UpdateAnalysisStatus();
+        lock (_hashLock)
+        {
+            _pageHashes.Clear();
+        }
+
+        _ = Task.Run(() => EnqueueDetectionRequestsAsync(pages, runId, _analysisCts.Token), _analysisCts.Token);
+    }
+
+    private async Task EnqueueDetectionRequestsAsync(
+        IReadOnlyList<PageItem> pages,
+        int runId,
+        CancellationToken ct)
+    {
+        foreach (var page in pages)
+        {
+            if (ct.IsCancellationRequested)
+            {
+                break;
+            }
+
+            await _detectChannel.Writer.WriteAsync(new DetectionRequest(page, runId, ct), ct);
+        }
+    }
+
+    private async Task ProcessDetectionQueueAsync()
+    {
+        var reader = _detectChannel.Reader;
+
+        try
+        {
+            while (await reader.WaitToReadAsync(_detectCts.Token))
+            {
+                while (reader.TryRead(out var request))
+                {
+                    if (request.CancellationToken.IsCancellationRequested || request.RunId != _analysisRunId)
+                    {
+                        continue;
+                    }
+
+                    var detections = AnalyzeDetections(request.Page);
+                    if (request.CancellationToken.IsCancellationRequested || request.RunId != _analysisRunId)
+                    {
+                        continue;
+                    }
+
+                    PersistDetections(request.Page, detections);
+
+                    PostToUi(() =>
+                    {
+                        ApplyDetectionsToPage(request.Page, detections);
+                        _analysisCompleted = Math.Min(_analysisCompleted + 1, _analysisTotal);
+                        UpdateAnalysisStatus();
+                    });
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private IReadOnlyList<Detection> AnalyzeDetections(PageItem page)
+    {
+        var detections = new List<Detection>(
+            _dummyDetector
+                .DetectFromFileName(page.FilePath)
+                .Where(d => !d.IsQlT05 && !string.Equals(d.Code, "STR-02", StringComparison.OrdinalIgnoreCase)));
+
+        detections.AddRange(_qualityDetector.DetectQlT05(page.FilePath, page.PdfPageIndex));
+
+        var currentHash = _structureDetector.ComputeHash(page.FilePath, page.PdfPageIndex);
+        if (currentHash is not null)
+        {
+            var matchPageIndex = 0;
+            var matchSimilarity = 0.0;
+
+            lock (_hashLock)
+            {
+                foreach (var existing in _pageHashes)
+                {
+                    var similarity = _structureDetector.ComputeSimilarity(currentHash, existing.Hash);
+                    if (similarity >= DuplicateSimilarityThreshold && similarity > matchSimilarity)
+                    {
+                        matchSimilarity = similarity;
+                        matchPageIndex = existing.PageIndex;
+                    }
+                }
+
+                _pageHashes.Add(new PageHash(page.Index, currentHash));
+            }
+
+            if (matchPageIndex > 0)
+            {
+                detections.Add(
+                    new Detection(
+                        "STR-02",
+                        $"ページ{matchPageIndex:000}と重複",
+                        NgLevel.NgA,
+                        SuggestedAction.Rescan,
+                        ReworkType.None,
+                        confidence: matchSimilarity,
+                        evidence: new[] { new EvidenceRegion(0, 0, 1, 1) }));
+            }
+        }
+
+        return detections;
+    }
+
+    private void ApplyDetectionsToPage(PageItem page, IReadOnlyList<Detection> detections)
+    {
+        if (page.IsReviewed)
+        {
+            return;
+        }
+
+        SetDetections(page, detections);
+
+        if (page == SelectedPage)
+        {
+            OnPropertyChanged(nameof(SelectedDecisionText));
+            if (CurrentImage is not null)
+            {
+                BuildOverlays(page, CurrentImage);
+            }
+        }
+
+        MaybeRefreshPagesView();
+    }
+
+    private void SetDetections(PageItem page, IReadOnlyList<Detection> detections)
+    {
+        page.Detections.Clear();
+        foreach (var detection in detections)
+        {
+            page.Detections.Add(detection);
+        }
+    }
+
+    private void PersistDetections(PageItem page, IReadOnlyList<Detection> detections)
+    {
+        if (_database is null)
+        {
+            return;
+        }
+
+        if (!_pageIdByIndex.TryGetValue(page.Index, out var pageId))
+        {
+            return;
+        }
+
+        _database.SaveDetections(pageId, detections);
+    }
+
+    private void PersistDecision(PageItem page)
+    {
+        if (_database is null)
+        {
+            return;
+        }
+
+        if (!_pageIdByIndex.TryGetValue(page.Index, out var pageId))
+        {
+            return;
+        }
+
+        if (page.Decision is null)
+        {
+            return;
+        }
+
+        _database.SaveDecision(pageId, page.Decision);
+    }
+
+    private void UpdateAnalysisStatus()
+    {
+        if (_analysisTotal <= 0)
+        {
+            return;
+        }
+
+        var message = _analysisCompleted >= _analysisTotal
+            ? $"解析完了: {_analysisCompleted}/{_analysisTotal} ページ"
+            : $"解析中: {_analysisCompleted}/{_analysisTotal} ページ";
+
+        StatusMessage = BuildStatusMessage(message);
+    }
+
+    private string BuildStatusMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(_dbLocationLabel))
+        {
+            return message;
+        }
+
+        return $"{message}  (DB配置: {_dbLocationLabel})";
+    }
+
+    private void MaybeRefreshPagesView()
+    {
+        _pendingRefreshCount++;
+        var now = DateTimeOffset.UtcNow;
+        var elapsed = now - _lastPagesRefresh;
+
+        if (_pendingRefreshCount < PagesRefreshBatchSize &&
+            elapsed.TotalMilliseconds < PagesRefreshMinIntervalMs)
+        {
+            return;
+        }
+
+        _pendingRefreshCount = 0;
+        _lastPagesRefresh = now;
+        PagesView.Refresh();
+    }
+
+    private void PostToUi(Action action)
+    {
+        if (_uiContext is not null)
+        {
+            _uiContext.Post(_ => action(), null);
+            return;
+        }
+
+        if (Application.Current?.Dispatcher is not null)
+        {
+            Application.Current.Dispatcher.InvokeAsync(action);
+            return;
+        }
+
+        action();
+    }
+
+    private sealed record PageHash(int PageIndex, byte[] Hash);
+
+    private sealed record DetectionRequest(PageItem Page, int RunId, CancellationToken CancellationToken);
 }

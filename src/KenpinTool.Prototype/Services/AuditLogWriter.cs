@@ -26,7 +26,7 @@ public sealed class AuditLogWriter : IDisposable
 
         _writer = new StreamWriter(
             new FileStream(auditLogPath, FileMode.Append, FileAccess.Write, FileShare.Read),
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
 
     public void Append(string type, object data)
