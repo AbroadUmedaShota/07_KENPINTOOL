@@ -46,3 +46,9 @@ dotnet run --project src/KenpinTool.Prototype -- ".\\samples\\inputs"
 - `C`: 比較モード
 - `F`: フィルタ（NG/疑いのみ）
 - `Z`: ズーム切替（1x/2x）
+### 起動と操作
+
+- 起動コマンド: `dotnet run --project src/KenpinTool.Prototype`
+- 画像ビューア: `Z` でフィット/等倍を切り替え、Ctrl+ホイールまたは Ctrl+`+`/`-` で自由に拡大縮小できます。
+- 判定操作: `Space` で OK（解析完了後）、`S` で再スキャン、`E` で例外承認。解析が未完了のページではこれらのボタンは非活性になります。
+- レポート/CSV: 処理中の案件情報は `runs/...` 配下に出力され、CSV・Auditログ・PDFレポートから追跡できます。

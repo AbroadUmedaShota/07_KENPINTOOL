@@ -33,13 +33,35 @@
             <ListView ItemsSource="{Binding PagesView}" 
                       SelectedItem="{Binding SelectedPage}"
                       SelectionMode="Single"
-                      VirtualizingPanel.IsVirtualizing="True">
+                      VirtualizingPanel.IsVirtualizing="True"
+                      SelectionChanged="PagesList_SelectionChanged">
                 <ListView.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{Binding Index, StringFormat='{}{0:000}'}" Margin="0,0,10,0" Foreground="Gray"/>
-                            <TextBlock Text="{Binding FileName}" />
-                        </StackPanel>
+                        <Grid Margin="0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0"
+                                    Width="36"
+                                    Height="24"
+                                    CornerRadius="4"
+                                    Background="{Binding BadgeBrush}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding BadgeText}"
+                                           Foreground="White"
+                                           FontWeight="Bold"
+                                           FontSize="12"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Center" />
+                            </Border>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding FileName}"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
@@ -67,13 +89,17 @@
             </ScrollViewer>
             
             <!-- Simple Overlay for status -->
-            <TextBlock Text="{Binding SelectedDecisionText}" 
-                       Foreground="Yellow" 
-                       FontSize="20" 
-                       HorizontalAlignment="Left" 
-                       VerticalAlignment="Top" 
-                       Margin="10" 
-                       Effect="{StaticResource StatusShadow}"/>
+            <Border Background="#99000000"
+                    CornerRadius="4"
+                    Padding="6"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Margin="10"
+                    Effect="{StaticResource StatusShadow}">
+                <TextBlock Text="{Binding SelectedDecisionText}" 
+                           Foreground="Yellow" 
+                           FontSize="20" />
+            </Border>
         </Grid>
 
         <!-- Right Pane: Controls -->
@@ -82,7 +108,7 @@
             <TextBlock Text="{Binding CaseName}" Margin="0,0,0,10"/>
 
             <TextBlock Text="フォルダパス:" FontWeight="Bold" />
-            <TextBox Text="{Binding InputFolderPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,5"/>
+            <TextBox Text="{Binding InputFolderPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,5" IsReadOnly="{Binding IsLoaded}" />
             <Button Content="読み込み" Command="{Binding LoadCommand}" Margin="0,0,0,20" Padding="5"/>
 
             <TextBlock Text="{Binding StatusMessage}" Foreground="Red" TextWrapping="Wrap" Margin="0,0,0,10" FontWeight="Bold"/>

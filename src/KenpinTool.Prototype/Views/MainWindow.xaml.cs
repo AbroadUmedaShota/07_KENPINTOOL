@@ -104,6 +104,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void PagesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ListView list && e.AddedItems.Count > 0)
+        {
+            list.ScrollIntoView(e.AddedItems[0]);
+        }
+    }
+
     private void OnPreviewKeyboardFocusChanged(object sender, KeyboardFocusChangedEventArgs e)
     {
         var target = e.NewFocus as DependencyObject;
