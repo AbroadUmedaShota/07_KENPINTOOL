@@ -13,6 +13,7 @@ namespace KenpinTool.Prototype;
 public sealed class PageItem : ObservableObject
 {
     private PageDecision? _decision;
+    private bool _isAnalyzed;
 
     public PageItem(int index, string filePath, IReadOnlyList<Detection> detections, int? pdfPageIndex = null)
     {
@@ -57,6 +58,12 @@ public sealed class PageItem : ObservableObject
     }
 
     public bool IsReviewed => Decision is not null;
+
+    public bool IsAnalyzed
+    {
+        get => _isAnalyzed;
+        private set => SetProperty(ref _isAnalyzed, value);
+    }
 
     public bool HasActiveDetections => Detections.Any(d => d.IsActive);
 
@@ -149,6 +156,16 @@ public sealed class PageItem : ObservableObject
         }
 
         Decision = new PageDecision(DecisionAction.Ok, DateTimeOffset.UtcNow);
+    }
+
+    public void MarkAnalyzed()
+    {
+        if (IsAnalyzed)
+        {
+            return;
+        }
+
+        IsAnalyzed = true;
     }
 
     public void RestoreDecision(PageDecision decision)

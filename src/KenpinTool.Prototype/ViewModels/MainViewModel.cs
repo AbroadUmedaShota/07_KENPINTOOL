@@ -82,6 +82,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private PageItem? _selectedPage;
     private BitmapSource? _currentImage;
     private BitmapSource? _previousImage;
+    private bool _isLoaded;
 
     public MainViewModel(
         ImageLoaderService imageLoader,
@@ -154,6 +155,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get => _statusMessage;
         private set => SetProperty(ref _statusMessage, value);
+    }
+
+    public bool IsLoaded
+    {
+        get => _isLoaded;
+        private set => SetProperty(ref _isLoaded, value);
     }
 
     public bool ShowNgOnly
@@ -362,6 +369,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             StatusMessage = "ロード中...";
+            IsLoaded = false;
 
             DisposeRun();
 
@@ -447,6 +455,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             CaseName = _runContext.CaseName;
             StatusMessage = BuildStatusMessage($"読み込み完了: {Pages.Count}ページ");
+            IsLoaded = true;
 
             OnPropertyChanged(nameof(ProgressText));
             OnPropertyChanged(nameof(PageCountText));
@@ -460,6 +469,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             StatusMessage = $"エラー: {ex.Message}";
+            IsLoaded = false;
         }
     }
 
@@ -556,6 +566,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return false;
         }
 
+        if (!SelectedPage.IsAnalyzed)
+        {
+            return false;
+        }
+
         return !SelectedPage.HasFatalActiveDetections;
     }
 
@@ -588,7 +603,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void MarkRescan()
     {
-        if (SelectedPage is null)
+        if (SelectedPage is null || !SelectedPage.IsAnalyzed)
         {
             return;
         }
@@ -615,6 +630,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         if (SelectedPage is null)
+        {
+            return false;
+        }
+
+        if (!SelectedPage.IsAnalyzed)
         {
             return false;
         }
@@ -1043,6 +1063,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             _pageHashes.Clear();
         }
+        IsLoaded = false;
     }
 
     public void Dispose()
@@ -1110,11 +1131,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     PersistDetections(request.Page, detections);
 
                     PostToUi(() =>
-                    {
-                        ApplyDetectionsToPage(request.Page, detections);
-                        _analysisCompleted = Math.Min(_analysisCompleted + 1, _analysisTotal);
-                        UpdateAnalysisStatus();
-                    });
+                {
+                    ApplyDetectionsToPage(request.Page, detections);
+                    _analysisCompleted = Math.Min(_analysisCompleted + 1, _analysisTotal);
+                    UpdateAnalysisStatus();
+                    UpdateCommandStates();
+                });
                 }
             }
         }
@@ -1198,6 +1220,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             page.Detections.Add(detection);
         }
+        page.MarkAnalyzed();
     }
 
     private void PersistDetections(PageItem page, IReadOnlyList<Detection> detections)
