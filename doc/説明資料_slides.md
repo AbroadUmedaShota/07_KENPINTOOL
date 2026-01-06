@@ -2,7 +2,7 @@
 marp: true
 theme: default
 header: '自動検品ツール（KENPINTOOL）プロジェクト'
-footer: '2026/01/04 進捗報告資料'
+footer: '2026/01/05 進捗報告資料'
 paginate: true
 ---
 
