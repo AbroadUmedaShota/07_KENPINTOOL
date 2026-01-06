@@ -14,6 +14,7 @@
     <Window.InputBindings>
         <KeyBinding Key="J" Command="{Binding NextPageCommand}" />
         <KeyBinding Key="K" Command="{Binding PrevPageCommand}" />
+        <KeyBinding Key="Backspace" Command="{Binding ResetDecisionCommand}" />
         <KeyBinding Key="Z" Command="{Binding ToggleZoomCommand}" />
         <KeyBinding Key="Add" Modifiers="Control" Command="{Binding ZoomInCommand}" />
         <KeyBinding Key="OemPlus" Modifiers="Control" Command="{Binding ZoomInCommand}" />
@@ -95,7 +96,8 @@
             <Button Content="OK（問題なし）" Command="{Binding MarkOkCommand}" Margin="0,5" Padding="10" Background="LightGreen"/>
             <Button Content="再スキャン（NG-A）" Command="{Binding MarkRescanCommand}" Margin="0,5" Padding="10" Background="LightYellow"/>
             <Button Content="例外承認（NG-B/C）" Command="{Binding RequestExceptionCommand}" Margin="0,5" Padding="10" Background="LightPink"/>
-            <TextBlock Text="ショートカット: J/K=上下, Z=等倍/フィット, Ctrl+ホイール/+/−=ズーム, Space=OK" FontSize="12" Foreground="Gray" Margin="0,2,0,10"/>
+            <Button Content="判定クリア（戻す）" Command="{Binding ResetDecisionCommand}" Margin="0,2,0,5" Padding="5" FontSize="11"/>
+            <TextBlock Text="ショートカット: J/K=上下, Z=等倍/フィット, Ctrl+ホイール/+/−=ズーム, Space=OK, Backspace=クリア" FontSize="12" Foreground="Gray" Margin="0,2,0,10"/>
 
             <Separator Margin="0,20" />
             

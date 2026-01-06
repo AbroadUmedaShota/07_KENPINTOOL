@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using KenpinTool.Prototype.ViewModels;
 
 namespace KenpinTool.Prototype.Views;
 
@@ -15,7 +16,12 @@ public partial class MainWindow : Window
         DataContext = viewModel;
 
         viewModel.ExceptionDialogRequested += ViewModel_ExceptionDialogRequested;
-        Closed += (s, e) => viewModel.ExceptionDialogRequested -= ViewModel_ExceptionDialogRequested;
+        viewModel.CompletionDialogRequested += ViewModel_CompletionDialogRequested;
+        Closed += (s, e) =>
+        {
+            viewModel.ExceptionDialogRequested -= ViewModel_ExceptionDialogRequested;
+            viewModel.CompletionDialogRequested -= ViewModel_CompletionDialogRequested;
+        };
         PreviewGotKeyboardFocus += OnPreviewKeyboardFocusChanged;
         PreviewLostKeyboardFocus += OnPreviewKeyboardFocusChanged;
         Loaded += OnLoaded;
@@ -35,6 +41,18 @@ public partial class MainWindow : Window
                 vm.ApplyExceptionDecision(dialog.SelectedReasonCode, dialog.Note);
             }
         }
+    }
+
+    private void ViewModel_CompletionDialogRequested(object? sender, CompletionDialogRequest e)
+    {
+        var vm = new CompletionViewModel(e.Total, e.Ok, e.Ng, e.Exception);
+        var dialog = new CompletionDialog(vm)
+        {
+            Owner = this
+        };
+
+        dialog.ShowDialog();
+        e.Callback(vm.DialogResult);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)

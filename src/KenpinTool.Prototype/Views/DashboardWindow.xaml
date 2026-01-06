@@ -1,0 +1,46 @@
+<Window x:Class="KenpinTool.Prototype.Views.DashboardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:viewmodels="clr-namespace:KenpinTool.Prototype.ViewModels"
+        mc:Ignorable="d"
+        Title="KENPINTOOL ダッシュボード" Height="450" Width="800"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,20">
+            <TextBlock Text="案件一覧" FontSize="24" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,20,0"/>
+            <Button Content="新規案件 (フォルダ選択)" Command="{Binding OpenFolderCommand}" Padding="10,5" />
+        </StackPanel>
+
+        <DataGrid Grid.Row="1" ItemsSource="{Binding Cases}" SelectedItem="{Binding SelectedCase}"
+                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                  CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="50"/>
+                <DataGridTextColumn Header="案件名" Binding="{Binding Name}" Width="200"/>
+                <DataGridTextColumn Header="入力パス" Binding="{Binding InputPath}" Width="*"/>
+                <DataGridTextColumn Header="ステータス" Binding="{Binding Status}" Width="80"/>
+                <DataGridTextColumn Header="開始日時" Binding="{Binding OpenedAtUtc, StringFormat='yyyy/MM/dd HH:mm'}" Width="140"/>
+            </DataGrid.Columns>
+            <DataGrid.InputBindings>
+                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ResumeCaseCommand}" />
+            </DataGrid.InputBindings>
+        </DataGrid>
+
+        <Grid Grid.Row="2" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" Foreground="Gray" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="選択した案件を再開" Command="{Binding ResumeCaseCommand}" Padding="20,10" FontWeight="Bold"/>
+        </Grid>
+    </Grid>
+</Window>

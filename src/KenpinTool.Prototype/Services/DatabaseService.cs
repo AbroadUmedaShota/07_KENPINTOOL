@@ -77,7 +77,7 @@ public sealed class DatabaseService
     public int GetOrCreateCase(string caseName, string inputPath, string ruleset, string status)
     {
         using var connection = OpenConnection();
-
+        // ... (existing implementation)
         using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = "SELECT Id FROM Cases WHERE InputPath = $inputPath";
@@ -105,6 +105,29 @@ public sealed class DatabaseService
             var id = cmd.ExecuteScalar();
             return Convert.ToInt32(id, CultureInfo.InvariantCulture);
         }
+    }
+
+    public List<CaseRecord> GetCases()
+    {
+        var result = new List<CaseRecord>();
+        using var connection = OpenConnection();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT Id, CaseName, InputPath, Status, OpenedAtUtc FROM Cases ORDER BY Id DESC";
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var id = reader.GetInt32(0);
+            var name = reader.GetString(1);
+            var path = reader.GetString(2);
+            var status = reader.GetString(3);
+            var openedAtText = reader.GetString(4);
+            var openedAt = DateTimeOffset.TryParse(openedAtText, out var dt) ? dt : DateTimeOffset.UtcNow;
+
+            result.Add(new CaseRecord(id, name, path, status, openedAt));
+        }
+
+        return result;
     }
 
     public Dictionary<int, int> UpsertPages(int caseId, IReadOnlyList<PageItem> pages)
@@ -318,6 +341,15 @@ public sealed class DatabaseService
         cmd.ExecuteNonQuery();
     }
 
+    public void DeleteDecision(int pageId)
+    {
+        using var connection = OpenConnection();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "DELETE FROM Decisions WHERE PageId = $pageId";
+        cmd.Parameters.AddWithValue("$pageId", pageId);
+        cmd.ExecuteNonQuery();
+    }
+
     private SqliteConnection OpenConnection()
     {
         var connection = new SqliteConnection($"Data Source={ActivePath}");
@@ -500,3 +532,5 @@ public sealed class DatabaseService
             """);
     }
 }
+
+public sealed record CaseRecord(int Id, string Name, string InputPath, string Status, DateTimeOffset OpenedAtUtc);

@@ -198,6 +198,21 @@ public sealed class PageItem : ObservableObject
             ExceptionNote: string.IsNullOrWhiteSpace(note) ? null : note.Trim());
     }
 
+    public void ResetDecision()
+    {
+        Decision = null;
+
+        // 昇格されたコードを疑いコード(NG-C)に戻す
+        ReplaceSuspicion("STR-01", "STR-01S", NgLevel.NgC, SuggestedAction.Rescan, ReworkType.None);
+        ReplaceSuspicion("STR-03", "STR-03S", NgLevel.NgC, SuggestedAction.Rescan, ReworkType.None);
+
+        // すべての検知をアクティブ（初期状態）に戻す
+        foreach (var detection in Detections)
+        {
+            detection.IsActive = true;
+        }
+    }
+
     private void EscalateSuspicionCodes()
     {
         // Prototype rule: STR-01S/03S -> STR-01/03 when RESCAN is chosen.

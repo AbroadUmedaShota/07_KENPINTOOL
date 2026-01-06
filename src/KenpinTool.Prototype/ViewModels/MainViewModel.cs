@@ -114,6 +114,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         MarkOkCommand = new RelayCommand(MarkOk, CanMarkOk);
         MarkRescanCommand = new RelayCommand(MarkRescan, () => SelectedPage is not null && !_isTextInputFocused);
         RequestExceptionCommand = new RelayCommand(RequestException, CanRequestException);
+        ResetDecisionCommand = new RelayCommand(ResetDecision, () => SelectedPage is not null && !_isTextInputFocused);
+        CompleteCaseCommand = new RelayCommand(CompleteCase, CheckCanCompleteCase);
         ToggleCompareCommand = new RelayCommand(ToggleCompare, () => Pages.Count > 0 && !_isTextInputFocused);
         ToggleFilterCommand = new RelayCommand(ToggleFilter, () => Pages.Count > 0 && !_isTextInputFocused);
         ToggleZoomCommand = new RelayCommand(ToggleZoom, () => SelectedPage is not null && !_isTextInputFocused);
@@ -124,6 +126,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public event EventHandler<ExceptionDialogRequest>? ExceptionDialogRequested;
+    public event EventHandler<CompletionDialogRequest>? CompletionDialogRequested;
 
     public ObservableCollection<PageItem> Pages { get; } = new();
 
@@ -283,6 +286,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IRelayCommand MarkOkCommand { get; }
     public IRelayCommand MarkRescanCommand { get; }
     public IRelayCommand RequestExceptionCommand { get; }
+    public IRelayCommand ResetDecisionCommand { get; }
+    public IRelayCommand CompleteCaseCommand { get; }
     public IRelayCommand ToggleCompareCommand { get; }
     public IRelayCommand ToggleFilterCommand { get; }
     public IRelayCommand ToggleZoomCommand { get; }
@@ -633,6 +638,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ExceptionDialogRequested?.Invoke(this, new ExceptionDialogRequest(DefaultExceptionReasonCodes));
     }
 
+    private void ResetDecision()
+    {
+        if (SelectedPage is null)
+        {
+            return;
+        }
+
+        SelectedPage.ResetDecision();
+
+        _auditLog?.Append("decision_reset", new
+        {
+            pageIndex = SelectedPage.Index,
+            fileName = SelectedPage.FileName,
+        });
+
+        if (_database is not null && _pageIdByIndex.TryGetValue(SelectedPage.Index, out var pageId))
+        {
+            _database.DeleteDecision(pageId);
+        }
+
+        OnPropertyChanged(nameof(SelectedDecisionText));
+        OnPropertyChanged(nameof(ProgressText));
+
+        PagesView.Refresh();
+        UpdateCommandStates();
+        _ = RefreshImagesAsync();
+    }
+
     private void ToggleCompare()
     {
         CompareMode = !CompareMode;
@@ -846,7 +879,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 exceptionReasonCode = decision.ExceptionReasonCode,
                 exceptionNote = decision.ExceptionNote,
                 pdfPageIndex = page.PdfPageIndex,
-                ngCodes = page.Detections.Select(d => d.Code).ToArray(),
+                activeNgCodes = page.Detections.Where(d => d.IsActive).Select(d => d.Code).ToArray(),
+                resolvedNgCodes = page.Detections.Where(d => !d.IsActive).Select(d => d.Code).ToArray(),
             });
     }
 
@@ -938,13 +972,55 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         MarkOkCommand.NotifyCanExecuteChanged();
         MarkRescanCommand.NotifyCanExecuteChanged();
         RequestExceptionCommand.NotifyCanExecuteChanged();
+        ResetDecisionCommand.NotifyCanExecuteChanged();
+        CompleteCaseCommand.NotifyCanExecuteChanged();
         ToggleCompareCommand.NotifyCanExecuteChanged();
         ToggleFilterCommand.NotifyCanExecuteChanged();
-        ToggleZoomCommand.NotifyCanExecuteChanged();
-        ZoomInCommand.NotifyCanExecuteChanged();
-        ZoomOutCommand.NotifyCanExecuteChanged();
-        ExportCsvCommand.NotifyCanExecuteChanged();
-        ExportReportCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CheckCanCompleteCase()
+    {
+        if (Pages.Count == 0)
+        {
+            return false;
+        }
+
+        // 全ページが判定済み(IsReviewed)であること
+        return Pages.All(p => p.IsReviewed);
+    }
+
+    private void CompleteCase()
+    {
+        if (!CheckCanCompleteCase())
+        {
+            StatusMessage = "未判定のページがあります。完了できません。";
+            return;
+        }
+
+        var okCount = Pages.Count(p => p.Decision?.Action == DecisionAction.Ok);
+        var ngCount = Pages.Count(p => p.Decision?.Action == DecisionAction.Rescan);
+        var excCount = Pages.Count(p => p.Decision?.Action == DecisionAction.ExceptionApproved);
+
+        CompletionDialogRequested?.Invoke(this, new CompletionDialogRequest(
+            Pages.Count,
+            okCount,
+            ngCount,
+            excCount,
+            confirmed =>
+            {
+                if (confirmed)
+                {
+                    ExecuteCompletion();
+                }
+            }));
+    }
+
+    private void ExecuteCompletion()
+    {
+        // TODO: Update DB status, export files, lock UI
+        ExportCsv();
+        _ = ExportReportAsync();
+        StatusMessage = "案件完了処理を実行しました。出力ファイルを確認してください。";
     }
 
     private void DisposeRun()
@@ -1221,3 +1297,5 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private sealed record DetectionRequest(PageItem Page, int RunId, CancellationToken CancellationToken);
 }
+
+public sealed record CompletionDialogRequest(int Total, int Ok, int Ng, int Exception, Action<bool> Callback);
