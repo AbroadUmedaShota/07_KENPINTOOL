@@ -370,13 +370,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _localDatabase = _masterDatabase;
         _caseId = caseRecord.Id;
         
+        var outputDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "KenpinOutput");
+        
         _runContext = new RunContext(
             CaseName: caseRecord.Name,
             InputFolderPath: "", 
-            OutputDirectory: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "KenpinOutput"), // Temp output
-            AuditLogPath: "", // No log for resume?
-            CsvPath: "",
-            CaseJsonPath: "",
+            OutputDirectory: outputDir, 
+            AuditLogPath: Path.Combine(outputDir, "audit.jsonl"),
+            CsvPath: Path.Combine(outputDir, "result.csv"),
+            CaseJsonPath: Path.Combine(outputDir, "case.json"),
             DbPath: _masterDatabase.ActivePath,
             DbFallbackPath: ""
         );
