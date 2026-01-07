@@ -4,27 +4,25 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using KenpinTool.Prototype.Services;
 
-namespace KenpinTool.Prototype.ViewModels;
+namespace KenpinTool.Prototype;
 
 public sealed class DashboardViewModel : ObservableObject
 {
     private readonly DatabaseService _database;
+    private readonly CaseLoader _caseLoader; // Added
     private CaseRecord? _selectedCase;
     private string _statusMessage = "";
 
-    public DashboardViewModel(DatabaseService database)
+    public DashboardViewModel(DatabaseService database, CaseLoader caseLoader)
     {
         _database = database;
-        
-        // アプリ起動時に初期化が必要なので、View側でInitializeを呼んでもらうか、
-        // 単純にコンストラクタで同期的にロードできる範囲でロードする。
-        // ここでは空にしておき、LoadCasesCommand等でロードする方針をとる。
+        _caseLoader = caseLoader;
         
         LoadCasesCommand = new RelayCommand(LoadCases);
-        OpenFolderCommand = new RelayCommand(OpenFolder);
+        CreateCaseCommand = new RelayCommand(CreateCase);
         ResumeCaseCommand = new RelayCommand(ResumeCase, () => SelectedCase is not null);
+        AddFolderToCaseCommand = new RelayCommand<CaseRecord>(AddFolderToCase);
     }
 
     public ObservableCollection<CaseRecord> Cases { get; } = new();
@@ -48,11 +46,12 @@ public sealed class DashboardViewModel : ObservableObject
     }
 
     public IRelayCommand LoadCasesCommand { get; }
-    public IRelayCommand OpenFolderCommand { get; }
+    public IRelayCommand CreateCaseCommand { get; }
     public IRelayCommand ResumeCaseCommand { get; }
+    public IRelayCommand<CaseRecord> AddFolderToCaseCommand { get; }
 
     // 画面遷移イベント
-    public event EventHandler<string>? RequestOpenInspection;
+    public event EventHandler<CaseRecord>? RequestOpenInspection;
 
     public void Initialize()
     {
@@ -64,6 +63,9 @@ public sealed class DashboardViewModel : ObservableObject
     {
         try
         {
+            // Log load start
+            // File.AppendAllText ... (Removed)
+
             Cases.Clear();
             var list = _database.GetCases();
             foreach (var item in list)
@@ -78,21 +80,36 @@ public sealed class DashboardViewModel : ObservableObject
         }
     }
 
-    private void OpenFolder()
+    private void CreateCase()
     {
-        using var dialog = new FolderBrowserDialog
+        var dialog = new Views.InputBoxDialog("新規案件名を入力してください", $"案件_{DateTime.Now:yyyyMMdd}");
+        if (dialog.ShowDialog() != true)
         {
-            Description = "検品対象のフォルダを選択してください",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false
-        };
+            return;
+        }
 
-        if (dialog.ShowDialog() == DialogResult.OK)
+        var caseName = dialog.ViewModel.InputText.Trim();
+        if (string.IsNullOrWhiteSpace(caseName))
         {
-            var path = dialog.SelectedPath;
-            // 新規案件として登録するロジックは本来ここで行うか、Inspection画面に渡してから行うか。
-            // 今回は「パスを渡してInspection画面を開き、そこでロード＆登録」というフローにする。
-            RequestOpenInspection?.Invoke(this, path);
+            StatusMessage = "案件名が空です。";
+            return;
+        }
+
+        try
+        {
+            // Create empty case
+            // Note: InputPath is unique constraint in DB currently. 
+            // We use a dummy unique path or empty string if allowed.
+            // For now, let's use a special prefix to indicate "Manual Created"
+            var dummyPath = $"MANUAL:{Guid.NewGuid()}"; 
+            var id = _database.GetOrCreateCase(caseName, dummyPath, "prototype-v0", "open");
+            
+            var newCase = new CaseRecord(id, caseName, "", "open", DateTimeOffset.UtcNow, Array.Empty<FolderRecord>());
+            RequestOpenInspection?.Invoke(this, newCase);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"案件作成エラー: {ex.Message}";
         }
     }
 
@@ -103,6 +120,64 @@ public sealed class DashboardViewModel : ObservableObject
             return;
         }
 
-        RequestOpenInspection?.Invoke(this, SelectedCase.InputPath);
+        RequestOpenInspection?.Invoke(this, SelectedCase);
+    }
+
+    private void AddFolderToCase(CaseRecord? record)
+    {
+        if (record is null) return;
+
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = $"案件「{record.Name}」に追加するフォルダを選択してください",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false
+        };
+
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            var path = dialog.SelectedPath;
+            try
+            {
+                // Load files from folder
+                var pageSources = _caseLoader.LoadPages(path);
+                if (pageSources.Count == 0)
+                {
+                    StatusMessage = "画像/PDFが見つかりませんでした。";
+                    return;
+                }
+
+                // Get current max index for this case (to append)
+                // Since DatabaseService doesn't have "GetMaxIndex", we iterate or fetch count.
+                // For prototype, let's just use a large enough index or 1-based from folder.
+                // Better: Modify UpsertPages or just fetch current pages first.
+                // Here we cheat: DatabaseService.UpsertPages uses PageItem.Index as key.
+                // We need unique indexes.
+                
+                // Fetch current pages to find max index
+                // (Optimized way would be a DB query, but let's reuse GetCases logic or similar if possible, 
+                // but GetCases only returns FolderRecords. We need page count.)
+                
+                var currentCount = record.Folders.Sum(f => f.PageCount);
+                var startIndex = currentCount + 1;
+
+                var pages = new List<PageItem>();
+                foreach (var source in pageSources)
+                {
+                    pages.Add(new PageItem(startIndex, source.FilePath, Array.Empty<Detection>(), source.PdfPageIndex));
+                    startIndex++;
+                }
+
+                // Register to DB
+                _database.UpsertPages(record.Id, pages);
+                
+                StatusMessage = $"案件「{record.Name}」に {pages.Count} ページ追加しました。";
+                LoadCases(); // Refresh list
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"フォルダ追加エラー: {ex.Message}";
+            }
+        }
     }
 }

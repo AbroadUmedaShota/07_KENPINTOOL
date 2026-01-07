@@ -5,7 +5,7 @@ using System.Drawing.Imaging;
 using OpenCvSharp;
 using PdfiumViewer;
 
-namespace KenpinTool.Prototype.Services;
+namespace KenpinTool.Prototype;
 
 public sealed class QualityDetectionService
 {
@@ -14,7 +14,7 @@ public sealed class QualityDetectionService
     private const int MaxEvidenceCount = 8;
     private const double AngleToleranceDeg = 5.0;
 
-    public IReadOnlyList<Detection> DetectQlT05(string filePath, int? pdfPageIndex)
+    public IReadOnlyList<Detection> DetectQlT05(string filePath, int? pdfPageIndex, DetectionSettings settings)
     {
         try
         {
@@ -26,17 +26,25 @@ public sealed class QualityDetectionService
 
             using var gray = EnsureGray(mat);
             using var blurred = new Mat();
-            Cv2.GaussianBlur(gray, blurred, new OpenCvSharp.Size(3, 3), 0);
+            // Use settings for blur kernel size
+            var kSize = Math.Max(1, settings.BlurKernelSize | 1); // Ensure odd
+            Cv2.GaussianBlur(gray, blurred, new OpenCvSharp.Size(kSize, kSize), 0);
 
             using var edges = new Mat();
-            Cv2.Canny(blurred, edges, 50, 150);
+            // Use settings for Canny thresholds
+            Cv2.Canny(blurred, edges, settings.CannyThreshold1, settings.CannyThreshold2);
 
             var minDim = Math.Min(gray.Width, gray.Height);
-            var minLineLength = Math.Max(40, (int)(minDim * MinLineLengthRatio));
-            var maxLineGap = Math.Max(8, (int)(minDim * 0.01));
+            
+            // Use settings for Line Length and Gap
+            var minLineLength = Math.Max(40, (int)(minDim * settings.MinLineLengthRatio));
+            var maxLineGap = Math.Max(8, (int)(minDim * settings.MaxLineGapRatio));
 
-            var lines = Cv2.HoughLinesP(edges, 1, Math.PI / 180, 100, minLineLength, maxLineGap);
-            var evidence = BuildEvidence(lines, gray.Width, gray.Height, minDim);
+            // Use settings for Hough Threshold
+            var lines = Cv2.HoughLinesP(edges, 1, Math.PI / 180, settings.HoughThreshold, minLineLength, maxLineGap);
+            
+            // Pass AngleToleranceDeg via settings if needed, or update BuildEvidence to take settings
+            var evidence = BuildEvidence(lines, gray.Width, gray.Height, minDim, settings);
             if (evidence.Count == 0)
             {
                 return Array.Empty<Detection>();
@@ -141,7 +149,8 @@ public sealed class QualityDetectionService
         IReadOnlyList<LineSegmentPoint> lines,
         int width,
         int height,
-        int minDim)
+        int minDim,
+        DetectionSettings settings)
     {
         var evidence = new List<EvidenceRegion>();
         if (lines.Count == 0 || width <= 0 || height <= 0)
@@ -156,8 +165,9 @@ public sealed class QualityDetectionService
             var dy = line.P2.Y - line.P1.Y;
             var angle = Math.Abs(Math.Atan2(dy, dx) * 180.0 / Math.PI);
 
-            var isHorizontal = angle <= AngleToleranceDeg || angle >= 180.0 - AngleToleranceDeg;
-            var isVertical = Math.Abs(angle - 90.0) <= AngleToleranceDeg;
+            var tolerance = settings.AngleToleranceDeg;
+            var isHorizontal = angle <= tolerance || angle >= 180.0 - tolerance;
+            var isVertical = Math.Abs(angle - 90.0) <= tolerance;
             if (!isHorizontal && !isVertical)
             {
                 continue;

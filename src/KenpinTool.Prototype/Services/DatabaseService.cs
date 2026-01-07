@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
-namespace KenpinTool.Prototype.Services;
+namespace KenpinTool.Prototype;
 
 public sealed class DatabaseService
 {
@@ -111,20 +111,74 @@ public sealed class DatabaseService
     {
         var result = new List<CaseRecord>();
         using var connection = OpenConnection();
+        
+        // 1. Get Cases
+        var cases = new List<(int Id, string Name, string Path, string Status, DateTimeOffset OpenedAt)>();
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT Id, CaseName, InputPath, Status, OpenedAtUtc FROM Cases ORDER BY Id DESC";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.GetInt32(0);
+                var name = reader.GetString(1);
+                var path = reader.GetString(2);
+                var status = reader.GetString(3);
+                var openedAtText = reader.GetString(4);
+                var openedAt = DateTimeOffset.TryParse(openedAtText, out var dt) ? dt : DateTimeOffset.UtcNow;
+                cases.Add((id, name, path, status, openedAt));
+            }
+        }
+
+        // 2. Get Folders for each case
+        foreach (var c in cases)
+        {
+            var folders = new List<FolderRecord>();
+            using (var cmd = connection.CreateCommand())
+            {
+                cmd.CommandText = "SELECT FilePath FROM Pages WHERE CaseId = $caseId";
+                cmd.Parameters.AddWithValue("$caseId", c.Id);
+                using var reader = cmd.ExecuteReader();
+                
+                var filePaths = new List<string>();
+                while (reader.Read())
+                {
+                    filePaths.Add(reader.GetString(0));
+                }
+
+                // Group by directory
+                var grouped = filePaths
+                    .Select(p => Path.GetDirectoryName(p) ?? "Unknown")
+                    .GroupBy(p => p)
+                    .Select(g => new FolderRecord(g.Key, g.Count()))
+                    .OrderBy(f => f.Path)
+                    .ToList();
+                
+                folders.AddRange(grouped);
+            }
+
+            result.Add(new CaseRecord(c.Id, c.Name, c.Path, c.Status, c.OpenedAt, folders));
+        }
+
+        return result;
+    }
+
+    public List<PageItem> GetPages(int caseId)
+    {
+        var result = new List<PageItem>();
+        using var connection = OpenConnection();
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, CaseName, InputPath, Status, OpenedAtUtc FROM Cases ORDER BY Id DESC";
+        cmd.CommandText = "SELECT PageIndex, FilePath, PdfPageIndex FROM Pages WHERE CaseId = $caseId ORDER BY PageIndex";
+        cmd.Parameters.AddWithValue("$caseId", caseId);
 
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            var id = reader.GetInt32(0);
-            var name = reader.GetString(1);
-            var path = reader.GetString(2);
-            var status = reader.GetString(3);
-            var openedAtText = reader.GetString(4);
-            var openedAt = DateTimeOffset.TryParse(openedAtText, out var dt) ? dt : DateTimeOffset.UtcNow;
-
-            result.Add(new CaseRecord(id, name, path, status, openedAt));
+            var index = reader.GetInt32(0);
+            var path = reader.GetString(1);
+            var pdfPage = reader.IsDBNull(2) ? (int?)null : reader.GetInt32(2);
+            
+            result.Add(new PageItem(index, path, Array.Empty<Detection>(), pdfPage));
         }
 
         return result;
@@ -533,4 +587,6 @@ public sealed class DatabaseService
     }
 }
 
-public sealed record CaseRecord(int Id, string Name, string InputPath, string Status, DateTimeOffset OpenedAtUtc);
+public sealed record CaseRecord(int Id, string Name, string InputPath, string Status, DateTimeOffset OpenedAtUtc, IReadOnlyList<FolderRecord> Folders);
+
+public sealed record FolderRecord(string Path, int PageCount);

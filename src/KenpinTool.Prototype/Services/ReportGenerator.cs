@@ -11,33 +11,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 
-namespace KenpinTool.Prototype.Services;
-
-public sealed record ReportMetadata(
-    string CaseName,
-    string InputPath,
-    DateTimeOffset CompletedAt,
-    string ToolVersion,
-    int TotalPages,
-    int OkCount,
-    int RescanCount,
-    int ExceptionCount,
-    int UnreviewedCount);
-
-public sealed record ReportDetection(
-    string Code,
-    NgLevel Level,
-    IReadOnlyList<EvidenceRegion> Evidence);
-
-public sealed record ReportIssueItem(
-    int PageIndex,
-    string FilePath,
-    string FileName,
-    int? PdfPageIndex,
-    DecisionAction DecisionAction,
-    string? ExceptionReasonCode,
-    string? ExceptionNote,
-    IReadOnlyList<ReportDetection> Detections);
+namespace KenpinTool.Prototype;
 
 public sealed class ReportGenerator
 {
@@ -415,3 +389,32 @@ public sealed class ReportGenerator
         }
     }
 }
+
+public sealed record ReportMetadata(
+    string CaseName,
+    string InputPath,
+    DateTimeOffset CompletedAt,
+    string ToolVersion,
+    int TotalPages,
+    int OkCount,
+    int RescanCount,
+    int ExceptionCount,
+    int UnreviewedCount
+);
+
+public sealed record ReportIssueItem(
+    int PageIndex,
+    string FilePath,
+    string FileName,
+    int? PdfPageIndex,
+    DecisionAction DecisionAction,
+    string? ExceptionReasonCode,
+    string? ExceptionNote,
+    IReadOnlyList<ReportDetection> Detections
+);
+
+public sealed record ReportDetection(
+    string Code,
+    NgLevel Level,
+    IReadOnlyList<EvidenceRegion> Evidence
+);

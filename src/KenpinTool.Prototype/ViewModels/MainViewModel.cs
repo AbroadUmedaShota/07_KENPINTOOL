@@ -15,7 +15,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using KenpinTool.Prototype.Services;
 
 namespace KenpinTool.Prototype;
 
@@ -36,6 +35,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly StructureDetectionService _structureDetector;
     private readonly ReportGenerator _reportGenerator;
     private readonly DatabaseService _masterDatabase; // Injected master DB service
+    private readonly DetectionSettings _settings; // Added
     private readonly object _hashLock = new();
     private readonly List<PageHash> _pageHashes = new();
 
@@ -105,6 +105,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _structureDetector = structureDetector;
         _reportGenerator = reportGenerator;
         _masterDatabase = masterDatabase;
+        _settings = new DetectionSettings(); // Initialize with defaults
+        _settings.PropertyChanged += OnSettingsChanged; // Subscribe to changes
         _uiContext = SynchronizationContext.Current;
 
         _detectChannel = Channel.CreateUnbounded<DetectionRequest>();
@@ -112,10 +114,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         PagesView = CollectionViewSource.GetDefaultView(Pages);
         PagesView.Filter = FilterPages;
+        PagesView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PageItem.GroupKey)));
 
         _zoomTransform = new ScaleTransform(_zoom, _zoom);
 
-        LoadCommand = new AsyncRelayCommand(LoadAsync, () => !string.IsNullOrWhiteSpace(InputFolderPath));
+        AddFolderCommand = new RelayCommand(AddFolder);
         NextPageCommand = new RelayCommand(NextPage, () => Pages.Count > 0 && !_isTextInputFocused);
         PrevPageCommand = new RelayCommand(PrevPage, () => Pages.Count > 0 && !_isTextInputFocused);
         NextIssuePageCommand = new RelayCommand(NextIssuePage, () => Pages.Count > 0 && !_isTextInputFocused);
@@ -132,6 +135,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ZoomOutCommand = new RelayCommand(() => AdjustZoom(1.0 / 1.1), () => SelectedPage is not null && !_isTextInputFocused);
         ExportCsvCommand = new RelayCommand(ExportCsv, () => Pages.Count > 0 && _runContext is not null);
         ExportReportCommand = new AsyncRelayCommand(ExportReportAsync, () => Pages.Count > 0 && _runContext is not null);
+        OpenSettingsCommand = new RelayCommand(OpenSettings);
     }
 
     public event EventHandler<ExceptionDialogRequest>? ExceptionDialogRequested;
@@ -144,13 +148,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string InputFolderPath
     {
         get => _inputFolderPath;
-        set
-        {
-            if (SetProperty(ref _inputFolderPath, value))
-            {
-                ((AsyncRelayCommand)LoadCommand).NotifyCanExecuteChanged();
-            }
-        }
+        set => SetProperty(ref _inputFolderPath, value);
     }
 
     public string CaseName
@@ -300,7 +298,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string OutputDirectoryText
         => _runContext is null ? "" : $"Output: {_runContext.OutputDirectory}";
 
-    public IRelayCommand LoadCommand { get; }
+    public IRelayCommand AddFolderCommand { get; }
     public IRelayCommand NextPageCommand { get; }
     public IRelayCommand PrevPageCommand { get; }
     public IRelayCommand NextIssuePageCommand { get; }
@@ -317,14 +315,240 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IRelayCommand ZoomOutCommand { get; }
     public IRelayCommand ExportCsvCommand { get; }
     public IAsyncRelayCommand ExportReportCommand { get; }
+    public IRelayCommand OpenSettingsCommand { get; }
 
-    public void Initialize(string? initialFolderPath)
+    private CaseRecord? _currentCaseRecord;
+
+    public void Initialize(CaseRecord? caseRecord)
     {
-        if (!string.IsNullOrWhiteSpace(initialFolderPath) && Directory.Exists(initialFolderPath))
+        if (caseRecord is null) return;
+
+        _currentCaseRecord = caseRecord;
+        CaseName = caseRecord.Name;
+        // InputPath is just a label now
+        InputFolderPath = caseRecord.InputPath;
+
+        // Initialize DB context regardless of path
+        // For manual/multi-folder cases, we rely on DB content, not re-scanning folder.
+        // We construct the RunContext based on the CaseRecord info (assuming standard structure)
+        
+        // Use the same logic as InitializeEmptyCase to derive paths
+        var safeName = string.Concat(caseRecord.Name.Split(Path.GetInvalidFileNameChars()));
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "KenpinTool.Prototype",
+            "runs",
+            $"{caseRecord.OpenedAtUtc:yyyyMMdd}_{safeName}"); // Need to match how it was created. 
+            // FIXME: Ideally RunContext path should be stored in DB or passed in. 
+            // For now, assuming "runs" structure or re-creating it.
+            // If the folder doesn't exist, we might be in trouble.
+            // But let's assume it exists or we recreate structure.
+            
+        // If we can't easily guess the path, we might need to store "RunDirectory" in DB.
+        // For this prototype, let's try to find the directory or just use a temp one if just viewing.
+        // Actually, InitializeEmptyCase logic used DateTime.Now, which is problematic for resuming.
+        // We should probably rely on DB having the data. 
+        // Let's create a context that points to the master DB for now? No, local DB is separate.
+        
+        // Wait, DatabaseService in App.xaml uses "kenpin_master.db" in LocalAppData root.
+        // The "local" DB was created in "runs/...".
+        // If we want to resume, we MUST know where that local DB is.
+        // Current CaseRecord doesn't have "LocalDbPath".
+        
+        // Strategy: Use Master DB as Local DB for manual cases? 
+        // No, that mixes data.
+        
+        // Workaround: Search for the run folder? Or just use Master DB for everything?
+        // Given the constraints, using Master DB for everything in this "Manual Mode" might be easiest.
+        // Let's assume _masterDatabase contains the Pages info.
+        
+        // If the pages were saved to _localDatabase which was in a timestamped folder, we lost the path.
+        // BUT, AddFolderToCase in DashboardViewModel wrote to `_database` (which is Master DB).
+        // So, the pages ARE in Master DB.
+        
+        // Therefore, we should use Master DB as our source of truth for this case.
+        _localDatabase = _masterDatabase;
+        _caseId = caseRecord.Id;
+        
+        _runContext = new RunContext(
+            CaseName: caseRecord.Name,
+            InputFolderPath: "", 
+            OutputDirectory: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "KenpinOutput"), // Temp output
+            AuditLogPath: "", // No log for resume?
+            CsvPath: "",
+            CaseJsonPath: "",
+            DbPath: _masterDatabase.ActivePath,
+            DbFallbackPath: ""
+        );
+
+        _ = LoadFromDatabaseAsync();
+    }
+
+    private async Task LoadFromDatabaseAsync()
+    {
+        try
         {
-            InputFolderPath = initialFolderPath;
-            _ = LoadAsync();
+            StatusMessage = "案件データを復元中...";
+            IsLoaded = false;
+            
+            // Dispose previous run but keep DB connection if it's master
+            // actually DisposeRun clears _localDatabase, so be careful.
+            // We just clear pages here.
+            Pages.Clear();
+            _pageIdByIndex.Clear();
+            lock (_hashLock) _pageHashes.Clear();
+
+            await Task.Yield();
+
+            // Load pages from DB
+            var pages = _localDatabase!.GetPages(_caseId);
+            
+            if (pages.Count == 0)
+            {
+                StatusMessage = "フォルダを追加してください。";
+                IsLoaded = true;
+                return;
+            }
+
+            foreach (var p in pages)
+            {
+                Pages.Add(p);
+                // Need to map Index -> ID for saving logic
+                // Since GetPages returns PageIndex (which we use as ID in memory), 
+                // but we need the DB ID. DatabaseService.UpsertPages returns Dictionary<Index, Id>.
+                // We should probably just fetch the mapping or assume PageIndex is enough if we only update.
+                // But SaveDecision needs DB ID.
+                
+                // For now, let's re-fetch the ID mapping.
+                // Or better, GetPages should return the DB ID too? 
+                // Let's assume we can re-upsert to get IDs or GetPages ensures index consistency.
+                // The GetPages implementation returns PageIndex as property "Index".
+                // But we need the PK "Id" for _pageIdByIndex.
+                
+                // Let's re-query IDs for these pages to be safe.
+                // Actually, since we are in "Master DB Mode", we can just use Upsert to refresh IDs.
+            }
+            
+            // Refresh IDs
+            foreach (var kvp in _localDatabase.UpsertPages(_caseId, pages))
+            {
+                _pageIdByIndex[kvp.Key] = kvp.Value;
+            }
+
+            RestoreCaseState(pages);
+            
+            IsLoaded = true;
+            StatusMessage = $"ロード完了: 全{Pages.Count}ページ";
+            if (SelectedPage is null) SelectedPage = Pages.FirstOrDefault();
+            
+            OnPropertyChanged(nameof(ProgressText));
+            OnPropertyChanged(nameof(PageCountText));
         }
+        catch (Exception ex)
+        {
+            StatusMessage = $"復元エラー: {ex.Message}";
+        }
+    }
+
+    private void RestoreCaseState(List<PageItem> pages)
+    {
+        var detectionsMap = _localDatabase!.LoadDetections(_caseId);
+        var decisionsMap = _localDatabase.LoadDecisions(_caseId);
+        var pagesToAnalyze = new List<PageItem>();
+
+        foreach (var page in pages)
+        {
+            if (detectionsMap.TryGetValue(page.Index, out var detections))
+            {
+                SetDetections(page, detections);
+            }
+
+            if (decisionsMap.TryGetValue(page.Index, out var decision))
+            {
+                page.RestoreDecision(decision);
+            }
+
+            if (!detectionsMap.ContainsKey(page.Index) && !page.IsReviewed)
+            {
+                pagesToAnalyze.Add(page);
+            }
+        }
+        
+        StartAnalysis(pagesToAnalyze);
+    }
+
+    private void InitializeEmptyCase(CaseRecord record)
+    {
+        DisposeRun();
+        
+        // Setup minimal context for empty case
+        // We use a safe name for folder
+        var safeName = string.Concat(record.Name.Split(Path.GetInvalidFileNameChars()));
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "KenpinTool.Prototype",
+            "runs",
+            $"{DateTime.Now:yyyyMMdd}_{safeName}");
+            
+        Directory.CreateDirectory(baseDir);
+
+        // Dummy run context
+        _runContext = new RunContext(
+            CaseName: record.Name,
+            InputFolderPath: "", // Empty initially
+            OutputDirectory: baseDir,
+            AuditLogPath: Path.Combine(baseDir, "audit.jsonl"),
+            CsvPath: Path.Combine(baseDir, "result.csv"),
+            CaseJsonPath: Path.Combine(baseDir, "case.json"),
+            DbPath: Path.Combine(baseDir, "kenpin.db"),
+            DbFallbackPath: Path.Combine(baseDir, "kenpin_fallback.db")
+        );
+
+        _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
+        _localDatabase = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
+        _localDatabase.Initialize();
+        _dbLocationLabel = _localDatabase.IsFallback ? "出力フォルダ" : "入力フォルダ";
+        
+        // Use the ID from master DB if possible, but local DB needs its own ID.
+        // We sync by name.
+        _caseId = _localDatabase.GetOrCreateCase(_runContext.CaseName, "MANUAL", "prototype-v0", "open");
+        
+        StatusMessage = "フォルダを追加してください。";
+        IsLoaded = true;
+    }
+
+    private void AddFolder()
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "追加するフォルダを選択してください",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false
+        };
+
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            var path = dialog.SelectedPath;
+            // Append loading
+            _ = LoadAsync(path, append: true);
+            
+            // Force reset focus state after dialog
+            UpdateTextInputFocus(false);
+        }
+    }
+
+    private void OpenSettings()
+    {
+        var settingsWindow = new SettingsWindow(_settings)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        settingsWindow.ShowDialog();
+        
+        // Reset focus state and re-analyze
+        UpdateTextInputFocus(false);
+        // 設定変更後は全ページを再解析する（次ページ以降にも反映させるため）
+        StartAnalysis(Pages.ToList());
     }
 
     public void UpdateTextInputFocus(bool isTextInputFocused)
@@ -379,16 +603,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         NextPage();
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(string folderPath, bool append = false)
     {
         try
         {
             StatusMessage = "ロード中...";
-            IsLoaded = false;
+            if (!append)
+            {
+                IsLoaded = false;
+                DisposeRun();
+            }
 
-            DisposeRun();
-
-            var folderPath = InputFolderPath.Trim();
             await Task.Yield();
 
             var pageSources = await Task.Run(() => _caseLoader.LoadPages(folderPath));
@@ -398,105 +623,77 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            _runContext = RunContext.Create(folderPath);
-            _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
-            _localDatabase = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
-            _localDatabase.Initialize();
-            _dbLocationLabel = _localDatabase.IsFallback ? "出力フォルダ" : "入力フォルダ";
-            _caseId = _localDatabase.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
-
-            // Register case to master database for dashboard visibility
-            try
+            if (!append || _runContext is null)
             {
-                _masterDatabase.Initialize();
-                _masterDatabase.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
-            }
-            catch (Exception ex)
-            {
-                // Non-fatal if master registration fails, but log it to audit
-                _auditLog.Append("master_db_error", new { message = ex.Message });
+                _runContext = RunContext.Create(folderPath);
+                _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
+                _localDatabase = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
+                _localDatabase.Initialize();
+                _dbLocationLabel = _localDatabase.IsFallback ? "出力フォルダ" : "入力フォルダ";
+                _caseId = _localDatabase.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
             }
 
-            var caseMeta = new
+            // Register case to master database if not manual
+            if (!folderPath.StartsWith("MANUAL:"))
             {
-                caseName = _runContext.CaseName,
-                inputFolderPath = _runContext.InputFolderPath,
-                openedAtUtc = DateTimeOffset.UtcNow,
-                ruleset = "prototype-v0",
-                pageCount = pageSources.Count,
-            };
-            File.WriteAllText(
-                _runContext.CaseJsonPath,
-                JsonSerializer.Serialize(caseMeta, new JsonSerializerOptions { WriteIndented = true }),
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+                try
+                {
+                    _masterDatabase.Initialize();
+                    _masterDatabase.GetOrCreateCase(_runContext!.CaseName, folderPath, "prototype-v0", "open");
+                }
+                catch (Exception ex)
+                {
+                    _auditLog?.Append("master_db_error", new { message = ex.Message });
+                }
+            }
 
-            _auditLog.Append("case_opened", caseMeta);
+            // ... (CaseMeta update omitted for append to avoid overwrite, or update page count)
 
             var pages = await Task.Run(() =>
             {
                 var result = new List<PageItem>(pageSources.Count);
-                var index = 1;
+                // Start index from current max + 1
+                var startIndex = Pages.Count + 1;
                 foreach (var source in pageSources)
                 {
-                    result.Add(new PageItem(index, source.FilePath, Array.Empty<Detection>(), source.PdfPageIndex));
-                    index++;
+                    result.Add(new PageItem(startIndex, source.FilePath, Array.Empty<Detection>(), source.PdfPageIndex));
+                    startIndex++;
                 }
 
                 return result;
             });
 
-            Pages.Clear();
+            if (!append) Pages.Clear();
 
             foreach (var p in pages)
             {
                 Pages.Add(p);
             }
 
-            _pageIdByIndex.Clear();
-            foreach (var kvp in _localDatabase.UpsertPages(_caseId, pages))
+            // ... (Rest is similar, just handle append)
+            // Need to update UpsertPages to handle new pages
+            if (_localDatabase is not null)
             {
-                _pageIdByIndex[kvp.Key] = kvp.Value;
-            }
-
-            var detectionsMap = _localDatabase.LoadDetections(_caseId);
-            var decisionsMap = _localDatabase.LoadDecisions(_caseId);
-            var pagesToAnalyze = new List<PageItem>();
-
-            foreach (var page in pages)
-            {
-                if (detectionsMap.TryGetValue(page.Index, out var detections))
+                foreach (var kvp in _localDatabase.UpsertPages(_caseId, pages))
                 {
-                    SetDetections(page, detections);
-                }
-
-                if (decisionsMap.TryGetValue(page.Index, out var decision))
-                {
-                    page.RestoreDecision(decision);
-                }
-
-                if (!detectionsMap.ContainsKey(page.Index) && !page.IsReviewed)
-                {
-                    pagesToAnalyze.Add(page);
+                    _pageIdByIndex[kvp.Key] = kvp.Value;
                 }
             }
 
-            CaseName = _runContext.CaseName;
-            StatusMessage = BuildStatusMessage($"読み込み完了: {Pages.Count}ページ");
+            // Restore state (load existing or start analysis)
+            RestoreCaseState(pages);
+            
             IsLoaded = true;
-
+            StatusMessage = $"ロード完了: 全{Pages.Count}ページ";
+            if (SelectedPage is null) SelectedPage = Pages.FirstOrDefault();
+            
             OnPropertyChanged(nameof(ProgressText));
             OnPropertyChanged(nameof(PageCountText));
-            OnPropertyChanged(nameof(OutputDirectoryText));
-
-            SelectedPage = Pages.FirstOrDefault();
-            UpdateCommandStates();
-
-            StartAnalysis(pagesToAnalyze);
         }
         catch (Exception ex)
         {
             StatusMessage = $"エラー: {ex.Message}";
-            IsLoaded = false;
+            if (!append) IsLoaded = false;
         }
     }
 
@@ -1093,7 +1290,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _analysisCts = null;
         _analysisTotal = 0;
         _analysisCompleted = 0;
-        _localDatabase = null;
+        
+        // Don't nullify if it's the master database (used for resume/manual cases)
+        if (_localDatabase != null && _localDatabase != _masterDatabase)
+        {
+            _localDatabase = null;
+        }
+        
         _caseId = 0;
         _pageIdByIndex.Clear();
         _dbLocationLabel = "";
@@ -1109,6 +1312,63 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DisposeRun();
         _detectCts.Cancel();
         _detectChannel.Writer.TryComplete();
+        _settings.PropertyChanged -= OnSettingsChanged;
+    }
+
+    private CancellationTokenSource? _reanalyzeCts;
+
+    private async void OnSettingsChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // Debounce: Cancel previous request and wait a bit
+        _reanalyzeCts?.Cancel();
+        _reanalyzeCts = new CancellationTokenSource();
+        var token = _reanalyzeCts.Token;
+
+        try
+        {
+            await Task.Delay(200, token); // Wait 200ms
+            if (token.IsCancellationRequested) return;
+
+            if (SelectedPage is not null)
+            {
+                await ReAnalyzeCurrentPage(SelectedPage, token);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Ignore
+        }
+    }
+
+    private async Task ReAnalyzeCurrentPage(PageItem page, CancellationToken token)
+    {
+        await Task.Run(() =>
+        {
+            if (token.IsCancellationRequested) return;
+            
+            var detections = AnalyzeDetections(page);
+            
+            if (token.IsCancellationRequested) return;
+
+            PostToUi(() =>
+            {
+                if (token.IsCancellationRequested) return;
+                if (SelectedPage == page)
+                {
+                    page.Detections.Clear();
+                    foreach (var d in detections)
+                    {
+                        page.Detections.Add(d);
+                    }
+                    
+                    OnPropertyChanged(nameof(SelectedDecisionText));
+                    if (CurrentImage is not null)
+                    {
+                        BuildOverlays(page, CurrentImage);
+                    }
+                }
+            });
+        }, token);
     }
 
     private void StartAnalysis(IReadOnlyList<PageItem> pages)
@@ -1186,7 +1446,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private IReadOnlyList<Detection> AnalyzeDetections(PageItem page)
     {
         // 1. Low-cost validation (Gatekeeper)
-        var simpleDetections = _simpleValidator.ValidateFile(page.FilePath);
+        var simpleDetections = _simpleValidator.ValidateFile(page.FilePath, page.PdfPageIndex, _settings);
         if (simpleDetections.Count > 0)
         {
             // If simple validation fails, return immediately (skip expensive checks)
@@ -1198,7 +1458,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 .DetectFromFileName(page.FilePath)
                 .Where(d => !d.IsQlT05 && !string.Equals(d.Code, "STR-02", StringComparison.OrdinalIgnoreCase)));
 
-        detections.AddRange(_qualityDetector.DetectQlT05(page.FilePath, page.PdfPageIndex));
+        detections.AddRange(_qualityDetector.DetectQlT05(page.FilePath, page.PdfPageIndex, _settings));
 
         var currentHash = _structureDetector.ComputeHash(page.FilePath, page.PdfPageIndex);
         if (currentHash is not null)

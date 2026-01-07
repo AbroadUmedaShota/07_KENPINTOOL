@@ -1,8 +1,5 @@
 using System.IO;
 using System.Windows;
-using KenpinTool.Prototype.Services;
-using KenpinTool.Prototype.ViewModels;
-using KenpinTool.Prototype.Views;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using QuestPDF.Infrastructure;
@@ -61,12 +58,12 @@ public partial class App : Application
         var dashboard = _host.Services.GetRequiredService<DashboardWindow>();
         if (dashboard.DataContext is DashboardViewModel vm)
         {
-            vm.RequestOpenInspection += (sender, path) =>
+            vm.RequestOpenInspection += (sender, caseRecord) =>
             {
                 var mainWindow = _host.Services.GetRequiredService<MainWindow>();
                 if (mainWindow.DataContext is MainViewModel mainVm)
                 {
-                    mainVm.Initialize(path);
+                    mainVm.Initialize(caseRecord);
                 }
                 
                 mainWindow.Show();

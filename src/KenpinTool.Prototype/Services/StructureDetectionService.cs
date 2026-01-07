@@ -5,7 +5,7 @@ using System.Drawing.Imaging;
 using OpenCvSharp;
 using PdfiumViewer;
 
-namespace KenpinTool.Prototype.Services;
+namespace KenpinTool.Prototype;
 
 public sealed class StructureDetectionService
 {

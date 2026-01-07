@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Collections.Specialized;
-using System.ComponentModel;
-using System.IO;
+using System.Collections.Specialized; 
+using System.ComponentModel; 
+using System.IO; // Added
 using System.Linq;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -42,6 +42,8 @@ public sealed class PageItem : ObservableObject
     public string FileName { get; }
     public int? PdfPageIndex { get; }
     public bool IsPdf => PdfPageIndex.HasValue;
+
+    public string GroupKey => IsPdf ? FileName : "画像ファイル";
 
     public ObservableCollection<Detection> Detections { get; }
 

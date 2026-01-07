@@ -2,11 +2,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
-using KenpinTool.Prototype.ViewModels;
 
-namespace KenpinTool.Prototype.Views;
+namespace KenpinTool.Prototype;
 
 public partial class MainWindow : Window
 {
@@ -106,8 +104,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Use ActualWidth/Height instead of ViewportWidth/Height to get the total available area
-        // for fit-calculation, which helps in hiding/showing scrollbars correctly.
         var width = ImageScrollHost.ActualWidth;
         var height = ImageScrollHost.ActualHeight;
         vm.UpdateViewportSize(width, height);

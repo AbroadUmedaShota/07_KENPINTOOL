@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
 using PdfiumViewer;
 
-namespace KenpinTool.Prototype.Services;
+namespace KenpinTool.Prototype;
 
 public class ImageLoaderService : IDisposable
 {
