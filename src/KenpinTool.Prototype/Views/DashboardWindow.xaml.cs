@@ -9,6 +9,12 @@ public partial class DashboardWindow : Window
     {
         InitializeComponent();
         DataContext = viewModel;
-        Loaded += (s, e) => viewModel.Initialize();
+        IsVisibleChanged += (s, e) =>
+        {
+            if (IsVisible)
+            {
+                viewModel.Initialize();
+            }
+        };
     }
 }

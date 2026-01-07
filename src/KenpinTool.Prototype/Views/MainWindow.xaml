@@ -9,6 +9,7 @@
     
     <Window.Resources>
         <DropShadowEffect x:Key="StatusShadow" BlurRadius="8" ShadowDepth="2" Opacity="0.6" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </Window.Resources>
 
     <Window.InputBindings>
@@ -16,6 +17,7 @@
         <KeyBinding Key="K" Command="{Binding PrevPageCommand}" />
         <KeyBinding Key="Backspace" Command="{Binding ResetDecisionCommand}" />
         <KeyBinding Key="Z" Command="{Binding ToggleZoomCommand}" />
+        <KeyBinding Key="V" Command="{Binding ToggleOverlayCommand}" />
         <KeyBinding Key="Add" Modifiers="Control" Command="{Binding ZoomInCommand}" />
         <KeyBinding Key="OemPlus" Modifiers="Control" Command="{Binding ZoomInCommand}" />
         <KeyBinding Key="Subtract" Modifiers="Control" Command="{Binding ZoomOutCommand}" />
@@ -77,16 +79,56 @@
                           PanningMode="Both"
                           SizeChanged="ImageScrollHost_SizeChanged"
                           PreviewMouseWheel="ImageScrollHost_PreviewMouseWheel">
-                <Image Source="{Binding CurrentImage}"
-                       Stretch="None"
-                       StretchDirection="Both"
-                       RenderOptions.BitmapScalingMode="HighQuality"
-                       SnapsToDevicePixels="True"
-                       UseLayoutRounding="True">
-                    <Image.LayoutTransform>
+                <!-- Image and Overlays container -->
+                <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Grid.LayoutTransform>
                         <ScaleTransform ScaleX="{Binding Zoom}" ScaleY="{Binding Zoom}" />
-                    </Image.LayoutTransform>
-                </Image>
+                    </Grid.LayoutTransform>
+                    
+                    <Image Source="{Binding CurrentImage}"
+                           Width="{Binding CurrentImage.Width}"
+                           Height="{Binding CurrentImage.Height}"
+                           Stretch="Uniform"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           SnapsToDevicePixels="True"
+                           UseLayoutRounding="True" />
+
+                    <!-- Bounding Boxes Layer -->
+                    <ItemsControl ItemsSource="{Binding CurrentOverlays}"
+                                  Width="{Binding CurrentImage.Width}"
+                                  Height="{Binding CurrentImage.Height}"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Top"
+                                  Visibility="{Binding ShowOverlays, Converter={StaticResource BoolToVis}}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <Canvas />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                <Setter Property="Width" Value="{Binding Width}" />
+                                <Setter Property="Height" Value="{Binding Height}" />
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <!-- Ultra-Thin Minimalist Box -->
+                                <Grid Opacity="{Binding Opacity}" ToolTip="{Binding Label}">
+                                    <!-- Single Ultra-Thin Border -->
+                                    <Rectangle Stroke="{Binding Stroke}" 
+                                               StrokeThickness="0.4" 
+                                               RadiusX="0" RadiusY="0"
+                                               Fill="Transparent" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
             </ScrollViewer>
             
             <!-- Simple Overlay for status -->
@@ -123,12 +165,13 @@
             <Button Content="再スキャン（NG-A）" Command="{Binding MarkRescanCommand}" Margin="0,5" Padding="10" Background="LightYellow"/>
             <Button Content="例外承認（NG-B/C）" Command="{Binding RequestExceptionCommand}" Margin="0,5" Padding="10" Background="LightPink"/>
             <Button Content="判定クリア（戻す）" Command="{Binding ResetDecisionCommand}" Margin="0,2,0,5" Padding="5" FontSize="11"/>
-            <TextBlock Text="ショートカット: J/K=上下, Z=等倍/フィット, Ctrl+ホイール/+/−=ズーム, Space=OK, Backspace=クリア" FontSize="12" Foreground="Gray" Margin="0,2,0,10"/>
+            <TextBlock Text="ショートカット: J/K=上下, Z=等倍/フィット, V=表示切替, Ctrl+ホイール/+/−=ズーム, Space=OK, Backspace=クリア" FontSize="12" Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,10"/>
 
             <Separator Margin="0,20" />
             
             <CheckBox Content="NG/疑いのみ表示" IsChecked="{Binding ShowNgOnly}" Command="{Binding ToggleFilterCommand}" Margin="0,5"/>
             <CheckBox Content="比較モード" IsChecked="{Binding CompareMode}" Command="{Binding ToggleCompareCommand}" Margin="0,5"/>
+            <CheckBox Content="エラー枠を表示 (V)" IsChecked="{Binding ShowOverlays}" Command="{Binding ToggleOverlayCommand}" Margin="0,5"/>
             <Button Content="表示モード切替 (Z)" Command="{Binding ToggleZoomCommand}" Margin="0,5"/>
             
             <Separator Margin="0,20" />

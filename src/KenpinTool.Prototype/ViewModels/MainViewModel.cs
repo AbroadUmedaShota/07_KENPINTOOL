@@ -34,6 +34,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly QualityDetectionService _qualityDetector;
     private readonly StructureDetectionService _structureDetector;
     private readonly ReportGenerator _reportGenerator;
+    private readonly DatabaseService _masterDatabase; // Injected master DB service
     private readonly object _hashLock = new();
     private readonly List<PageHash> _pageHashes = new();
 
@@ -57,7 +58,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private RunContext? _runContext;
     private AuditLogWriter? _auditLog;
-    private DatabaseService? _database;
+    private DatabaseService? _localDatabase; // Instance-specific local DB
     private int _caseId;
     private readonly Dictionary<int, int> _pageIdByIndex = new();
     private string _dbLocationLabel = "";
@@ -66,6 +67,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _caseName = "";
     private string _statusMessage = "フォルダを入力して Load";
     private bool _showNgOnly;
+    private bool _showOverlays = true; // Default to visible
     private bool _compareMode;
     private double _zoom = 1.0;
     private enum ZoomMode { Fit, Actual, Free }
@@ -90,7 +92,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DummyDetectionService dummyDetector,
         QualityDetectionService qualityDetector,
         StructureDetectionService structureDetector,
-        ReportGenerator reportGenerator)
+        ReportGenerator reportGenerator,
+        DatabaseService masterDatabase)
     {
         _imageLoader = imageLoader;
         _caseLoader = caseLoader;
@@ -98,6 +101,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _qualityDetector = qualityDetector;
         _structureDetector = structureDetector;
         _reportGenerator = reportGenerator;
+        _masterDatabase = masterDatabase;
         _uiContext = SynchronizationContext.Current;
 
         _detectChannel = Channel.CreateUnbounded<DetectionRequest>();
@@ -119,6 +123,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CompleteCaseCommand = new RelayCommand(CompleteCase, CheckCanCompleteCase);
         ToggleCompareCommand = new RelayCommand(ToggleCompare, () => Pages.Count > 0 && !_isTextInputFocused);
         ToggleFilterCommand = new RelayCommand(ToggleFilter, () => Pages.Count > 0 && !_isTextInputFocused);
+        ToggleOverlayCommand = new RelayCommand(ToggleOverlay, () => SelectedPage is not null && !_isTextInputFocused);
         ToggleZoomCommand = new RelayCommand(ToggleZoom, () => SelectedPage is not null && !_isTextInputFocused);
         ZoomInCommand = new RelayCommand(() => AdjustZoom(1.1), () => SelectedPage is not null && !_isTextInputFocused);
         ZoomOutCommand = new RelayCommand(() => AdjustZoom(1.0 / 1.1), () => SelectedPage is not null && !_isTextInputFocused);
@@ -174,6 +179,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 UpdateCommandStates();
             }
         }
+    }
+
+    public bool ShowOverlays
+    {
+        get => _showOverlays;
+        set => SetProperty(ref _showOverlays, value);
     }
 
     public bool CompareMode
@@ -297,6 +308,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IRelayCommand CompleteCaseCommand { get; }
     public IRelayCommand ToggleCompareCommand { get; }
     public IRelayCommand ToggleFilterCommand { get; }
+    public IRelayCommand ToggleOverlayCommand { get; }
     public IRelayCommand ToggleZoomCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
@@ -385,10 +397,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             _runContext = RunContext.Create(folderPath);
             _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
-            _database = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
-            _database.Initialize();
-            _dbLocationLabel = _database.IsFallback ? "出力フォルダ" : "入力フォルダ";
-            _caseId = _database.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
+            _localDatabase = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
+            _localDatabase.Initialize();
+            _dbLocationLabel = _localDatabase.IsFallback ? "出力フォルダ" : "入力フォルダ";
+            _caseId = _localDatabase.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
+
+            // Register case to master database for dashboard visibility
+            try
+            {
+                _masterDatabase.Initialize();
+                _masterDatabase.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal if master registration fails, but log it to audit
+                _auditLog.Append("master_db_error", new { message = ex.Message });
+            }
 
             var caseMeta = new
             {
@@ -426,13 +450,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             _pageIdByIndex.Clear();
-            foreach (var kvp in _database.UpsertPages(_caseId, pages))
+            foreach (var kvp in _localDatabase.UpsertPages(_caseId, pages))
             {
                 _pageIdByIndex[kvp.Key] = kvp.Value;
             }
 
-            var detectionsMap = _database.LoadDetections(_caseId);
-            var decisionsMap = _database.LoadDecisions(_caseId);
+            var detectionsMap = _localDatabase.LoadDetections(_caseId);
+            var decisionsMap = _localDatabase.LoadDecisions(_caseId);
             var pagesToAnalyze = new List<PageItem>();
 
             foreach (var page in pages)
@@ -673,9 +697,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             fileName = SelectedPage.FileName,
         });
 
-        if (_database is not null && _pageIdByIndex.TryGetValue(SelectedPage.Index, out var pageId))
+        if (_localDatabase is not null && _pageIdByIndex.TryGetValue(SelectedPage.Index, out var pageId))
         {
-            _database.DeleteDecision(pageId);
+            _localDatabase.DeleteDecision(pageId);
         }
 
         OnPropertyChanged(nameof(SelectedDecisionText));
@@ -696,6 +720,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         ShowNgOnly = !ShowNgOnly;
         StatusMessage = ShowNgOnly ? "絞り込み: NG/疑いのみ" : "絞り込み: 全て";
+    }
+
+    private void ToggleOverlay()
+    {
+        ShowOverlays = !ShowOverlays;
+        StatusMessage = ShowOverlays ? "エラー枠表示: ON" : "エラー枠表示: OFF";
     }
 
     private void ToggleZoom()
@@ -746,20 +776,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             _fitZoom = 1.0;
             _actualZoom = 1.0;
-            ApplyZoomMode(_zoomMode);
             return;
         }
 
         var dpiX = Math.Max(1.0, image.DpiX);
         var dpiY = Math.Max(1.0, image.DpiY);
-        var imageWidthDip = image.PixelWidth * (96.0 / dpiX);
-        var imageHeightDip = image.PixelHeight * (96.0 / dpiY);
+        var imageWidthDip = image.Width;
+        var imageHeightDip = image.Height;
 
-        var widthScale = _viewportWidth > 0 && imageWidthDip > double.Epsilon
-            ? _viewportWidth / imageWidthDip
+        // Add a small margin (e.g., 20px) to ensure the image doesn't touch the edges and avoids scrollbars
+        const double margin = 20.0;
+        var availableWidth = Math.Max(0, _viewportWidth - margin);
+        var availableHeight = Math.Max(0, _viewportHeight - margin);
+
+        var widthScale = availableWidth > 0 && imageWidthDip > double.Epsilon
+            ? availableWidth / imageWidthDip
             : 1.0;
-        var heightScale = _viewportHeight > 0 && imageHeightDip > double.Epsilon
-            ? _viewportHeight / imageHeightDip
+        var heightScale = availableHeight > 0 && imageHeightDip > double.Epsilon
+            ? availableHeight / imageHeightDip
             : 1.0;
 
         var fitScale = Math.Min(widthScale, heightScale);
@@ -768,7 +802,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             fitScale = 1.0;
         }
 
-        _fitZoom = Math.Max(MinZoom, fitScale);
+        _fitZoom = Math.Clamp(fitScale, MinZoom, MaxZoom);
         _actualZoom = Math.Max(MinZoom, dpiX / 96.0);
 
         if (_zoomMode != ZoomMode.Free)
@@ -955,8 +989,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         CurrentOverlays.Clear();
 
-        var w = image.PixelWidth;
-        var h = image.PixelHeight;
+        // Use Width/Height (DIPs) instead of PixelWidth/PixelHeight for WPF Canvas coordinates
+        var w = image.Width;
+        var h = image.Height;
         if (w <= 0 || h <= 0)
         {
             return;
@@ -1055,7 +1090,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _analysisCts = null;
         _analysisTotal = 0;
         _analysisCompleted = 0;
-        _database = null;
+        _localDatabase = null;
         _caseId = 0;
         _pageIdByIndex.Clear();
         _dbLocationLabel = "";
@@ -1225,7 +1260,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void PersistDetections(PageItem page, IReadOnlyList<Detection> detections)
     {
-        if (_database is null)
+        if (_localDatabase is null)
         {
             return;
         }
@@ -1235,12 +1270,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _database.SaveDetections(pageId, detections);
+        _localDatabase.SaveDetections(pageId, detections);
     }
 
     private void PersistDecision(PageItem page)
     {
-        if (_database is null)
+        if (_localDatabase is null)
         {
             return;
         }
@@ -1255,7 +1290,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _database.SaveDecision(pageId, page.Decision);
+        _localDatabase.SaveDecision(pageId, page.Decision);
     }
 
     private void UpdateAnalysisStatus()

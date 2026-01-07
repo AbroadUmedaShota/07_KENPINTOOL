@@ -106,8 +106,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var width = ImageScrollHost.ViewportWidth > 0 ? ImageScrollHost.ViewportWidth : ImageScrollHost.ActualWidth;
-        var height = ImageScrollHost.ViewportHeight > 0 ? ImageScrollHost.ViewportHeight : ImageScrollHost.ActualHeight;
+        // Use ActualWidth/Height instead of ViewportWidth/Height to get the total available area
+        // for fit-calculation, which helps in hiding/showing scrollbars correctly.
+        var width = ImageScrollHost.ActualWidth;
+        var height = ImageScrollHost.ActualHeight;
         vm.UpdateViewportSize(width, height);
     }
 

@@ -48,6 +48,7 @@ public partial class App : Application
                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                         "KenpinTool.Prototype");
                     var dbPath = Path.Combine(appData, "kenpin_master.db");
+                    
                     // Fallback is same for now, or use MyDocuments if needed
                     return new DatabaseService(dbPath, dbPath);
                 });
