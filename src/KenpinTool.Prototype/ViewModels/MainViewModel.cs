@@ -1231,6 +1231,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CompleteCaseCommand.NotifyCanExecuteChanged();
         ToggleCompareCommand.NotifyCanExecuteChanged();
         ToggleFilterCommand.NotifyCanExecuteChanged();
+        ExportCsvCommand.NotifyCanExecuteChanged();
+        ExportReportCommand.NotifyCanExecuteChanged();
     }
 
     private bool CheckCanCompleteCase()
