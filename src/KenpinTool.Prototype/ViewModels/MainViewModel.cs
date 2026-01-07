@@ -31,6 +31,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly ImageLoaderService _imageLoader;
     private readonly CaseLoader _caseLoader;
     private readonly DummyDetectionService _dummyDetector;
+    private readonly SimpleValidationService _simpleValidator; // Injected
     private readonly QualityDetectionService _qualityDetector;
     private readonly StructureDetectionService _structureDetector;
     private readonly ReportGenerator _reportGenerator;
@@ -90,6 +91,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ImageLoaderService imageLoader,
         CaseLoader caseLoader,
         DummyDetectionService dummyDetector,
+        SimpleValidationService simpleValidator,
         QualityDetectionService qualityDetector,
         StructureDetectionService structureDetector,
         ReportGenerator reportGenerator,
@@ -98,6 +100,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _imageLoader = imageLoader;
         _caseLoader = caseLoader;
         _dummyDetector = dummyDetector;
+        _simpleValidator = simpleValidator;
         _qualityDetector = qualityDetector;
         _structureDetector = structureDetector;
         _reportGenerator = reportGenerator;
@@ -1182,6 +1185,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private IReadOnlyList<Detection> AnalyzeDetections(PageItem page)
     {
+        // 1. Low-cost validation (Gatekeeper)
+        var simpleDetections = _simpleValidator.ValidateFile(page.FilePath);
+        if (simpleDetections.Count > 0)
+        {
+            // If simple validation fails, return immediately (skip expensive checks)
+            return simpleDetections;
+        }
+
         var detections = new List<Detection>(
             _dummyDetector
                 .DetectFromFileName(page.FilePath)

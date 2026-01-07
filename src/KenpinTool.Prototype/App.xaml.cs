@@ -29,6 +29,7 @@ public partial class App : Application
                 services.AddSingleton<ImageLoaderService>();
                 services.AddSingleton<CaseLoader>();
                 services.AddSingleton<DummyDetectionService>();
+                services.AddSingleton<SimpleValidationService>(); // Added SimpleValidationService
                 services.AddSingleton<QualityDetectionService>();
                 services.AddSingleton<StructureDetectionService>();
                 services.AddSingleton<ReportGenerator>();
