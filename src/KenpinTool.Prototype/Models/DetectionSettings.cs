@@ -18,6 +18,7 @@ public sealed class DetectionSettings : ObservableObject
     public const double DefaultCannyThreshold1 = 50;
     public const double DefaultCannyThreshold2 = 150;
     public const int DefaultBlurKernelSize = 3;
+    public const double DefaultStr01BlackPixelLimit = 0.005; // 0.5%
 
     // --- Low Validation (SimpleValidationService) ---
 
@@ -107,6 +108,13 @@ public sealed class DetectionSettings : ObservableObject
         set => SetProperty(ref _blurKernelSize, value);
     }
 
+    private double _str01BlackPixelLimit = DefaultStr01BlackPixelLimit;
+    public double Str01BlackPixelLimit
+    {
+        get => _str01BlackPixelLimit;
+        set => SetProperty(ref _str01BlackPixelLimit, value);
+    }
+
     public void Reset()
     {
         CornerDarkThreshold = DefaultCornerDarkThreshold;
@@ -121,5 +129,6 @@ public sealed class DetectionSettings : ObservableObject
         CannyThreshold1 = DefaultCannyThreshold1;
         CannyThreshold2 = DefaultCannyThreshold2;
         BlurKernelSize = DefaultBlurKernelSize;
+        Str01BlackPixelLimit = DefaultStr01BlackPixelLimit;
     }
 }

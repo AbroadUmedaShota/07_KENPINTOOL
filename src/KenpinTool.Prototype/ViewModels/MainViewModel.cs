@@ -1460,7 +1460,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var detections = new List<Detection>(
             _dummyDetector
                 .DetectFromFileName(page.FilePath)
-                .Where(d => !d.IsQlT05 && !string.Equals(d.Code, "STR-02", StringComparison.OrdinalIgnoreCase)));
+                .Where(d => !d.IsQlT05 
+                            && !string.Equals(d.Code, "STR-02", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(d.Code, "STR-01S", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(d.Code, "STR-01", StringComparison.OrdinalIgnoreCase)));
+
+        // Real detections
+        var str01 = _structureDetector.DetectStr01(page.FilePath, page.PdfPageIndex, _settings);
+        if (str01 is not null)
+        {
+            detections.Add(str01);
+        }
 
         detections.AddRange(_qualityDetector.DetectQlT05(page.FilePath, page.PdfPageIndex, _settings));
 
