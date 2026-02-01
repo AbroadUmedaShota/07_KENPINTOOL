@@ -5,13 +5,56 @@ using System.Drawing.Imaging;
 using OpenCvSharp;
 using PdfiumViewer;
 
-namespace KenpinTool.Prototype.Services;
+namespace KenpinTool.Prototype;
 
 public sealed class StructureDetectionService
 {
     private const int RenderDpi = 240;
     private const int HashSize = 64;
     private static readonly byte[] BitCounts = BuildBitCounts();
+
+    public Detection? DetectStr01(string filePath, int? pdfPageIndex, DetectionSettings settings)
+    {
+        try
+        {
+            using var mat = LoadMat(filePath, pdfPageIndex);
+            if (mat is null || mat.Empty())
+            {
+                return null;
+            }
+
+            using var gray = EnsureGray(mat);
+            
+            // Simple binarization (fixed threshold for document scanning)
+            // Inverted: Text becomes White(255), Background becomes Black(0)
+            using var binary = new Mat();
+            Cv2.Threshold(gray, binary, 240, 255, ThresholdTypes.BinaryInv);
+
+            var totalPixels = binary.Total();
+            var nonZeroPixels = Cv2.CountNonZero(binary);
+            var ratio = (double)nonZeroPixels / totalPixels;
+
+            if (ratio < settings.Str01BlackPixelLimit)
+            {
+                // Blank page detected
+                return new Detection(
+                    "STR-01S",
+                    "ページ抜け疑い（白紙）",
+                    NgLevel.NgC,
+                    SuggestedAction.Review,
+                    ReworkType.None,
+                    confidence: 1.0 - (ratio / settings.Str01BlackPixelLimit), // Lower ratio = Higher confidence
+                    evidence: new[] { new EvidenceRegion(0, 0, 1, 1) } // Whole page
+                );
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     public byte[]? ComputeHash(string filePath, int? pdfPageIndex)
     {

@@ -1,0 +1,112 @@
+<Window x:Class="KenpinTool.Prototype.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:KenpinTool.Prototype"
+        mc:Ignorable="d"
+        Title="検知パラメータ設定" Height="600" Width="500"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="検知パラメータ調整" FontSize="18" FontWeight="Bold" Margin="0,0,0,20"/>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Orientation="Vertical">
+                
+                <!-- Low Validation Group -->
+                <GroupBox Header="低検知 (ゲートキーパー)" Margin="0,0,0,15" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="角欠け検知: 黒判定しきい値 (0-255)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding CornerDarkThreshold}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="0" Maximum="100" Value="{Binding CornerDarkThreshold}" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                        <TextBlock Text="小さいほど真っ黒(0)に近いものだけを欠けとみなします。" FontSize="10" Foreground="Gray" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="アスペクト比: 最小 (標準1.1)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding AspectRatioMin, StringFormat=N2}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="0.5" Maximum="1.4" Value="{Binding AspectRatioMin}" SmallChange="0.01" LargeChange="0.1" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+
+                        <TextBlock Text="アスペクト比: 最大 (標準1.8)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding AspectRatioMax, StringFormat=N2}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="1.4" Maximum="3.0" Value="{Binding AspectRatioMax}" SmallChange="0.01" LargeChange="0.1" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- STR-01 Group -->
+                <GroupBox Header="白紙検知 (STR-01)" Margin="0,0,0,15" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="黒画素率: しきい値 (0.00-0.05)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding Str01BlackPixelLimit, StringFormat=P2}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="0.0001" Maximum="0.05" Value="{Binding Str01BlackPixelLimit}" SmallChange="0.0001" LargeChange="0.001" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                        <TextBlock Text="この割合未満の黒画素しかないページを「白紙疑い」とみなします。" FontSize="10" Foreground="Gray" Margin="0,0,0,10"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- High Validation Group -->
+                <GroupBox Header="高度検知 (線状ノイズ QLT-05)" Margin="0,0,0,15" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="長さ感度: 最小長さ率 (0.0-1.0)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding MinLineLengthRatio, StringFormat=P0}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="0.1" Maximum="1.0" Value="{Binding MinLineLengthRatio}" SmallChange="0.01" LargeChange="0.1" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                        <TextBlock Text="画面幅の何%以上の長さがあればノイズとみなすか。上げると表の誤検知が減ります。" FontSize="10" Foreground="Gray" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="濃さ感度 (Hough Threshold)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding HoughThreshold}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="50" Maximum="300" Value="{Binding HoughThreshold}" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                        <TextBlock Text="線の明瞭さ。上げると薄い線を無視します。" FontSize="10" Foreground="Gray" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="途切れ許容度 (Gap Ratio)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding MaxLineGapRatio, StringFormat=P1}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="0.0" Maximum="0.05" Value="{Binding MaxLineGapRatio}" SmallChange="0.001" LargeChange="0.01" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                        <TextBlock Text="点線を繋げる強さ。下げると文字の誤検知が減ります。" FontSize="10" Foreground="Gray" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="角度誤差 (度)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <DockPanel>
+                            <TextBox Text="{Binding AngleToleranceDeg, StringFormat=N1}" Width="40" DockPanel.Dock="Right" TextAlignment="Right"/>
+                            <Slider Minimum="0.1" Maximum="10.0" Value="{Binding AngleToleranceDeg}" AutoToolTipPlacement="TopLeft"/>
+                        </DockPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="画像処理 (高度検知の前処理)" Margin="0,0,0,15" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="エッジ検出: 閾値1 (低)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <Slider Minimum="10" Maximum="200" Value="{Binding CannyThreshold1}"/>
+                        
+                        <TextBlock Text="エッジ検出: 閾値2 (高)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <Slider Minimum="50" Maximum="300" Value="{Binding CannyThreshold2}"/>
+                        
+                        <TextBlock Text="ぼかし強度 (Kernel Size)" FontWeight="Bold" Margin="0,5,0,0"/>
+                        <Slider Minimum="1" Maximum="9" Value="{Binding BlurKernelSize}" TickFrequency="2" IsSnapToTickEnabled="True"/>
+                    </StackPanel>
+                </GroupBox>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="デフォルトに戻す" Click="ResetButton_Click" Width="120" Margin="0,0,10,0" />
+            <Button Content="閉じる" IsCancel="True" Padding="20,5" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

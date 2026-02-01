@@ -1,6 +1,5 @@
+using System.IO;
 using System.Windows;
-using KenpinTool.Prototype.Services;
-using KenpinTool.Prototype.Views;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using QuestPDF.Infrastructure;
@@ -27,22 +26,59 @@ public partial class App : Application
                 services.AddSingleton<ImageLoaderService>();
                 services.AddSingleton<CaseLoader>();
                 services.AddSingleton<DummyDetectionService>();
+                services.AddSingleton<SimpleValidationService>(); // Added SimpleValidationService
                 services.AddSingleton<QualityDetectionService>();
                 services.AddSingleton<StructureDetectionService>();
                 services.AddSingleton<ReportGenerator>();
 
                 // ViewModels
                 services.AddTransient<MainViewModel>();
+                services.AddTransient<DashboardViewModel>();
 
                 // Views
-                services.AddSingleton<MainWindow>();
+                services.AddTransient<MainWindow>();
+                services.AddSingleton<DashboardWindow>();
+
+                // Database
+                services.AddSingleton<DatabaseService>(sp => 
+                {
+                    var appData = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "KenpinTool.Prototype");
+                    var dbPath = Path.Combine(appData, "kenpin_master.db");
+                    
+                    // Fallback is same for now, or use MyDocuments if needed
+                    return new DatabaseService(dbPath, dbPath);
+                });
             })
             .Build();
 
         await _host.StartAsync();
 
-        var mainWindow = _host.Services.GetRequiredService<MainWindow>();
-        mainWindow.Show();
+        var dashboard = _host.Services.GetRequiredService<DashboardWindow>();
+        if (dashboard.DataContext is DashboardViewModel vm)
+        {
+            vm.RequestOpenInspection += (sender, caseRecord) =>
+            {
+                var mainWindow = _host.Services.GetRequiredService<MainWindow>();
+                if (mainWindow.DataContext is MainViewModel mainVm)
+                {
+                    mainVm.Initialize(caseRecord);
+                }
+                
+                mainWindow.Show();
+                dashboard.Hide(); // ダッシュボードを隠す（閉じるとアプリ終了してしまう場合があるため）
+                
+                mainWindow.Closed += (s, e) => 
+                {
+                    // メインウィンドウが閉じたらダッシュボードを再表示してリストを更新
+                    dashboard.Show();
+                    vm.Initialize(); 
+                };
+            };
+        }
+        
+        dashboard.Show();
     }
 
     protected override async void OnExit(ExitEventArgs e)

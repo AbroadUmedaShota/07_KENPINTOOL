@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Collections.Specialized;
-using System.ComponentModel;
-using System.IO;
+using System.Collections.Specialized; 
+using System.ComponentModel; 
+using System.IO; // Added
 using System.Linq;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -42,6 +42,8 @@ public sealed class PageItem : ObservableObject
     public string FileName { get; }
     public int? PdfPageIndex { get; }
     public bool IsPdf => PdfPageIndex.HasValue;
+
+    public string GroupKey => IsPdf ? FileName : "画像ファイル";
 
     public ObservableCollection<Detection> Detections { get; }
 
@@ -217,6 +219,21 @@ public sealed class PageItem : ObservableObject
             DateTimeOffset.UtcNow,
             ExceptionReasonCode: reasonCode.Trim(),
             ExceptionNote: string.IsNullOrWhiteSpace(note) ? null : note.Trim());
+    }
+
+    public void ResetDecision()
+    {
+        Decision = null;
+
+        // 昇格されたコードを疑いコード(NG-C)に戻す
+        ReplaceSuspicion("STR-01", "STR-01S", NgLevel.NgC, SuggestedAction.Rescan, ReworkType.None);
+        ReplaceSuspicion("STR-03", "STR-03S", NgLevel.NgC, SuggestedAction.Rescan, ReworkType.None);
+
+        // すべての検知をアクティブ（初期状態）に戻す
+        foreach (var detection in Detections)
+        {
+            detection.IsActive = true;
+        }
     }
 
     private void EscalateSuspicionCodes()

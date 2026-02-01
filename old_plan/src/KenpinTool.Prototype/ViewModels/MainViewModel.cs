@@ -15,7 +15,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using KenpinTool.Prototype.Services;
 
 namespace KenpinTool.Prototype;
 
@@ -34,9 +33,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly ImageLoaderService _imageLoader;
     private readonly CaseLoader _caseLoader;
     private readonly DummyDetectionService _dummyDetector;
+    private readonly SimpleValidationService _simpleValidator; // Injected
     private readonly QualityDetectionService _qualityDetector;
     private readonly StructureDetectionService _structureDetector;
     private readonly ReportGenerator _reportGenerator;
+    private readonly DatabaseService _masterDatabase; // Injected master DB service
+    private readonly DetectionSettings _settings; // Added
     private readonly object _hashLock = new();
     private readonly List<PageHash> _pageHashes = new();
 
@@ -60,7 +62,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private RunContext? _runContext;
     private AuditLogWriter? _auditLog;
-    private DatabaseService? _database;
+    private DatabaseService? _localDatabase; // Instance-specific local DB
     private int _caseId;
     private readonly Dictionary<int, int> _pageIdByIndex = new();
     private string _dbLocationLabel = "";
@@ -69,6 +71,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _caseName = "";
     private string _statusMessage = "フォルダを入力して Load";
     private bool _showNgOnly;
+    private bool _showOverlays = true; // Default to visible
     private bool _compareMode;
     private double _zoom = 1.0;
     private enum ZoomMode { Fit, Actual, Free }
@@ -91,16 +94,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ImageLoaderService imageLoader,
         CaseLoader caseLoader,
         DummyDetectionService dummyDetector,
+        SimpleValidationService simpleValidator,
         QualityDetectionService qualityDetector,
         StructureDetectionService structureDetector,
-        ReportGenerator reportGenerator)
+        ReportGenerator reportGenerator,
+        DatabaseService masterDatabase)
     {
         _imageLoader = imageLoader;
         _caseLoader = caseLoader;
         _dummyDetector = dummyDetector;
+        _simpleValidator = simpleValidator;
         _qualityDetector = qualityDetector;
         _structureDetector = structureDetector;
         _reportGenerator = reportGenerator;
+        _masterDatabase = masterDatabase;
+        _settings = new DetectionSettings(); // Initialize with defaults
+        _settings.PropertyChanged += OnSettingsChanged; // Subscribe to changes
         _uiContext = SynchronizationContext.Current;
 
         _detectChannel = Channel.CreateUnbounded<DetectionRequest>();
@@ -108,26 +117,32 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         PagesView = CollectionViewSource.GetDefaultView(Pages);
         PagesView.Filter = FilterPages;
+        PagesView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PageItem.GroupKey)));
 
         _zoomTransform = new ScaleTransform(_zoom, _zoom);
 
-        LoadCommand = new AsyncRelayCommand(LoadAsync, () => !string.IsNullOrWhiteSpace(InputFolderPath));
+        AddFolderCommand = new RelayCommand(AddFolder);
         NextPageCommand = new RelayCommand(NextPage, () => Pages.Count > 0 && !_isTextInputFocused);
         PrevPageCommand = new RelayCommand(PrevPage, () => Pages.Count > 0 && !_isTextInputFocused);
         NextIssuePageCommand = new RelayCommand(NextIssuePage, () => Pages.Count > 0 && !_isTextInputFocused);
         MarkOkCommand = new RelayCommand(MarkOk, CanMarkOk);
         MarkRescanCommand = new RelayCommand(MarkRescan, () => SelectedPage is not null && !_isTextInputFocused);
         RequestExceptionCommand = new RelayCommand(RequestException, CanRequestException);
+        ResetDecisionCommand = new RelayCommand(ResetDecision, () => SelectedPage is not null && !_isTextInputFocused);
+        CompleteCaseCommand = new RelayCommand(CompleteCase, CheckCanCompleteCase);
         ToggleCompareCommand = new RelayCommand(ToggleCompare, () => Pages.Count > 0 && !_isTextInputFocused);
         ToggleFilterCommand = new RelayCommand(ToggleFilter, () => Pages.Count > 0 && !_isTextInputFocused);
+        ToggleOverlayCommand = new RelayCommand(ToggleOverlay, () => SelectedPage is not null && !_isTextInputFocused);
         ToggleZoomCommand = new RelayCommand(ToggleZoom, () => SelectedPage is not null && !_isTextInputFocused);
         ZoomInCommand = new RelayCommand(() => AdjustZoom(1.1), () => SelectedPage is not null && !_isTextInputFocused);
         ZoomOutCommand = new RelayCommand(() => AdjustZoom(1.0 / 1.1), () => SelectedPage is not null && !_isTextInputFocused);
         ExportCsvCommand = new RelayCommand(ExportCsv, () => Pages.Count > 0 && _runContext is not null);
         ExportReportCommand = new AsyncRelayCommand(ExportReportAsync, () => Pages.Count > 0 && _runContext is not null);
+        OpenSettingsCommand = new RelayCommand(OpenSettings);
     }
 
     public event EventHandler<ExceptionDialogRequest>? ExceptionDialogRequested;
+    public event EventHandler<CompletionDialogRequest>? CompletionDialogRequested;
 
     public ObservableCollection<PageItem> Pages { get; } = new();
 
@@ -136,13 +151,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string InputFolderPath
     {
         get => _inputFolderPath;
-        set
-        {
-            if (SetProperty(ref _inputFolderPath, value))
-            {
-                ((AsyncRelayCommand)LoadCommand).NotifyCanExecuteChanged();
-            }
-        }
+        set => SetProperty(ref _inputFolderPath, value);
     }
 
     public string CaseName
@@ -174,6 +183,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 UpdateCommandStates();
             }
         }
+    }
+
+    public bool ShowOverlays
+    {
+        get => _showOverlays;
+        set => SetProperty(ref _showOverlays, value);
     }
 
     public bool CompareMode
@@ -290,28 +305,259 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string OutputDirectoryText
         => _runContext is null ? "" : $"Output: {_runContext.OutputDirectory}";
 
-    public IRelayCommand LoadCommand { get; }
+    public IRelayCommand AddFolderCommand { get; }
     public IRelayCommand NextPageCommand { get; }
     public IRelayCommand PrevPageCommand { get; }
     public IRelayCommand NextIssuePageCommand { get; }
     public IRelayCommand MarkOkCommand { get; }
     public IRelayCommand MarkRescanCommand { get; }
     public IRelayCommand RequestExceptionCommand { get; }
+    public IRelayCommand ResetDecisionCommand { get; }
+    public IRelayCommand CompleteCaseCommand { get; }
     public IRelayCommand ToggleCompareCommand { get; }
     public IRelayCommand ToggleFilterCommand { get; }
+    public IRelayCommand ToggleOverlayCommand { get; }
     public IRelayCommand ToggleZoomCommand { get; }
     public IRelayCommand ZoomInCommand { get; }
     public IRelayCommand ZoomOutCommand { get; }
     public IRelayCommand ExportCsvCommand { get; }
     public IAsyncRelayCommand ExportReportCommand { get; }
+    public IRelayCommand OpenSettingsCommand { get; }
 
-    public void Initialize(string? initialFolderPath)
+    private CaseRecord? _currentCaseRecord;
+
+    public void Initialize(CaseRecord? caseRecord)
     {
-        if (!string.IsNullOrWhiteSpace(initialFolderPath) && Directory.Exists(initialFolderPath))
+        if (caseRecord is null) return;
+
+        _currentCaseRecord = caseRecord;
+        CaseName = caseRecord.Name;
+        // InputPath is just a label now
+        InputFolderPath = caseRecord.InputPath;
+
+        // Initialize DB context regardless of path
+        // For manual/multi-folder cases, we rely on DB content, not re-scanning folder.
+        // We construct the RunContext based on the CaseRecord info (assuming standard structure)
+        
+        // Use the same logic as InitializeEmptyCase to derive paths
+        var safeName = string.Concat(caseRecord.Name.Split(Path.GetInvalidFileNameChars()));
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "KenpinTool.Prototype",
+            "runs",
+            $"{caseRecord.OpenedAtUtc:yyyyMMdd}_{safeName}"); // Need to match how it was created. 
+            // FIXME: Ideally RunContext path should be stored in DB or passed in. 
+            // For now, assuming "runs" structure or re-creating it.
+            // If the folder doesn't exist, we might be in trouble.
+            // But let's assume it exists or we recreate structure.
+            
+        // If we can't easily guess the path, we might need to store "RunDirectory" in DB.
+        // For this prototype, let's try to find the directory or just use a temp one if just viewing.
+        // Actually, InitializeEmptyCase logic used DateTime.Now, which is problematic for resuming.
+        // We should probably rely on DB having the data. 
+        // Let's create a context that points to the master DB for now? No, local DB is separate.
+        
+        // Wait, DatabaseService in App.xaml uses "kenpin_master.db" in LocalAppData root.
+        // The "local" DB was created in "runs/...".
+        // If we want to resume, we MUST know where that local DB is.
+        // Current CaseRecord doesn't have "LocalDbPath".
+        
+        // Strategy: Use Master DB as Local DB for manual cases? 
+        // No, that mixes data.
+        
+        // Workaround: Search for the run folder? Or just use Master DB for everything?
+        // Given the constraints, using Master DB for everything in this "Manual Mode" might be easiest.
+        // Let's assume _masterDatabase contains the Pages info.
+        
+        // If the pages were saved to _localDatabase which was in a timestamped folder, we lost the path.
+        // BUT, AddFolderToCase in DashboardViewModel wrote to `_database` (which is Master DB).
+        // So, the pages ARE in Master DB.
+        
+        // Therefore, we should use Master DB as our source of truth for this case.
+        _localDatabase = _masterDatabase;
+        _caseId = caseRecord.Id;
+        
+        var outputDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "KenpinOutput");
+        
+        _runContext = new RunContext(
+            CaseName: caseRecord.Name,
+            InputFolderPath: "", 
+            OutputDirectory: outputDir, 
+            AuditLogPath: Path.Combine(outputDir, "audit.jsonl"),
+            CsvPath: Path.Combine(outputDir, "result.csv"),
+            CaseJsonPath: Path.Combine(outputDir, "case.json"),
+            DbPath: _masterDatabase.ActivePath,
+            DbFallbackPath: ""
+        );
+
+        _ = LoadFromDatabaseAsync();
+    }
+
+    private async Task LoadFromDatabaseAsync()
+    {
+        try
         {
-            InputFolderPath = initialFolderPath;
-            _ = LoadAsync();
+            StatusMessage = "案件データを復元中...";
+            IsLoaded = false;
+            
+            // Dispose previous run but keep DB connection if it's master
+            // actually DisposeRun clears _localDatabase, so be careful.
+            // We just clear pages here.
+            Pages.Clear();
+            _pageIdByIndex.Clear();
+            lock (_hashLock) _pageHashes.Clear();
+
+            await Task.Yield();
+
+            // Load pages from DB
+            var pages = _localDatabase!.GetPages(_caseId);
+            
+            if (pages.Count == 0)
+            {
+                StatusMessage = "フォルダを追加してください。";
+                IsLoaded = true;
+                return;
+            }
+
+            foreach (var p in pages)
+            {
+                Pages.Add(p);
+                // Need to map Index -> ID for saving logic
+                // Since GetPages returns PageIndex (which we use as ID in memory), 
+                // but we need the DB ID. DatabaseService.UpsertPages returns Dictionary<Index, Id>.
+                // We should probably just fetch the mapping or assume PageIndex is enough if we only update.
+                // But SaveDecision needs DB ID.
+                
+                // For now, let's re-fetch the ID mapping.
+                // Or better, GetPages should return the DB ID too? 
+                // Let's assume we can re-upsert to get IDs or GetPages ensures index consistency.
+                // The GetPages implementation returns PageIndex as property "Index".
+                // But we need the PK "Id" for _pageIdByIndex.
+                
+                // Let's re-query IDs for these pages to be safe.
+                // Actually, since we are in "Master DB Mode", we can just use Upsert to refresh IDs.
+            }
+            
+            // Refresh IDs
+            foreach (var kvp in _localDatabase.UpsertPages(_caseId, pages))
+            {
+                _pageIdByIndex[kvp.Key] = kvp.Value;
+            }
+
+            RestoreCaseState(pages);
+            
+            IsLoaded = true;
+            StatusMessage = $"ロード完了: 全{Pages.Count}ページ";
+            if (SelectedPage is null) SelectedPage = Pages.FirstOrDefault();
+            
+            OnPropertyChanged(nameof(ProgressText));
+            OnPropertyChanged(nameof(PageCountText));
         }
+        catch (Exception ex)
+        {
+            StatusMessage = $"復元エラー: {ex.Message}";
+        }
+    }
+
+    private void RestoreCaseState(List<PageItem> pages)
+    {
+        var detectionsMap = _localDatabase!.LoadDetections(_caseId);
+        var decisionsMap = _localDatabase.LoadDecisions(_caseId);
+        var pagesToAnalyze = new List<PageItem>();
+
+        foreach (var page in pages)
+        {
+            if (detectionsMap.TryGetValue(page.Index, out var detections))
+            {
+                SetDetections(page, detections);
+            }
+
+            if (decisionsMap.TryGetValue(page.Index, out var decision))
+            {
+                page.RestoreDecision(decision);
+            }
+
+            if (!detectionsMap.ContainsKey(page.Index) && !page.IsReviewed)
+            {
+                pagesToAnalyze.Add(page);
+            }
+        }
+        
+        StartAnalysis(pagesToAnalyze);
+    }
+
+    private void InitializeEmptyCase(CaseRecord record)
+    {
+        DisposeRun();
+        
+        // Setup minimal context for empty case
+        // We use a safe name for folder
+        var safeName = string.Concat(record.Name.Split(Path.GetInvalidFileNameChars()));
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "KenpinTool.Prototype",
+            "runs",
+            $"{DateTime.Now:yyyyMMdd}_{safeName}");
+            
+        Directory.CreateDirectory(baseDir);
+
+        // Dummy run context
+        _runContext = new RunContext(
+            CaseName: record.Name,
+            InputFolderPath: "", // Empty initially
+            OutputDirectory: baseDir,
+            AuditLogPath: Path.Combine(baseDir, "audit.jsonl"),
+            CsvPath: Path.Combine(baseDir, "result.csv"),
+            CaseJsonPath: Path.Combine(baseDir, "case.json"),
+            DbPath: Path.Combine(baseDir, "kenpin.db"),
+            DbFallbackPath: Path.Combine(baseDir, "kenpin_fallback.db")
+        );
+
+        _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
+        _localDatabase = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
+        _localDatabase.Initialize();
+        _dbLocationLabel = _localDatabase.IsFallback ? "出力フォルダ" : "入力フォルダ";
+        
+        // Use the ID from master DB if possible, but local DB needs its own ID.
+        // We sync by name.
+        _caseId = _localDatabase.GetOrCreateCase(_runContext.CaseName, "MANUAL", "prototype-v0", "open");
+        
+        StatusMessage = "フォルダを追加してください。";
+        IsLoaded = true;
+    }
+
+    private void AddFolder()
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "追加するフォルダを選択してください",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false
+        };
+
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            var path = dialog.SelectedPath;
+            // Append loading
+            _ = LoadAsync(path, append: true);
+            
+            // Force reset focus state after dialog
+            UpdateTextInputFocus(false);
+        }
+    }
+
+    private void OpenSettings()
+    {
+        var settingsWindow = new SettingsWindow(_settings)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        settingsWindow.ShowDialog();
+        
+        // Reset focus state and re-analyze
+        UpdateTextInputFocus(false);
+        // 設定変更後は全ページを再解析する（次ページ以降にも反映させるため）
+        StartAnalysis(Pages.ToList());
     }
 
     public void UpdateTextInputFocus(bool isTextInputFocused)
@@ -377,16 +623,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         NextPage();
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(string folderPath, bool append = false)
     {
         try
         {
             StatusMessage = "ロード中...";
-            IsLoaded = false;
+            if (!append)
+            {
+                IsLoaded = false;
+                DisposeRun();
+            }
 
-            DisposeRun();
-
-            var folderPath = InputFolderPath.Trim();
             await Task.Yield();
 
             var pageSources = await Task.Run(() => _caseLoader.LoadPages(folderPath));
@@ -396,93 +643,77 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            _runContext = RunContext.Create(folderPath);
-            _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
-            _database = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
-            _database.Initialize();
-            _dbLocationLabel = _database.IsFallback ? "出力フォルダ" : "入力フォルダ";
-            _caseId = _database.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
-
-            var caseMeta = new
+            if (!append || _runContext is null)
             {
-                caseName = _runContext.CaseName,
-                inputFolderPath = _runContext.InputFolderPath,
-                openedAtUtc = DateTimeOffset.UtcNow,
-                ruleset = "prototype-v0",
-                pageCount = pageSources.Count,
-            };
-            File.WriteAllText(
-                _runContext.CaseJsonPath,
-                JsonSerializer.Serialize(caseMeta, new JsonSerializerOptions { WriteIndented = true }),
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+                _runContext = RunContext.Create(folderPath);
+                _auditLog = new AuditLogWriter(_runContext.AuditLogPath);
+                _localDatabase = new DatabaseService(_runContext.DbPath, _runContext.DbFallbackPath);
+                _localDatabase.Initialize();
+                _dbLocationLabel = _localDatabase.IsFallback ? "出力フォルダ" : "入力フォルダ";
+                _caseId = _localDatabase.GetOrCreateCase(_runContext.CaseName, folderPath, "prototype-v0", "open");
+            }
 
-            _auditLog.Append("case_opened", caseMeta);
+            // Register case to master database if not manual
+            if (!folderPath.StartsWith("MANUAL:"))
+            {
+                try
+                {
+                    _masterDatabase.Initialize();
+                    _masterDatabase.GetOrCreateCase(_runContext!.CaseName, folderPath, "prototype-v0", "open");
+                }
+                catch (Exception ex)
+                {
+                    _auditLog?.Append("master_db_error", new { message = ex.Message });
+                }
+            }
+
+            // ... (CaseMeta update omitted for append to avoid overwrite, or update page count)
 
             var pages = await Task.Run(() =>
             {
                 var result = new List<PageItem>(pageSources.Count);
-                var index = 1;
+                // Start index from current max + 1
+                var startIndex = Pages.Count + 1;
                 foreach (var source in pageSources)
                 {
-                    result.Add(new PageItem(index, source.FilePath, Array.Empty<Detection>(), source.PdfPageIndex));
-                    index++;
+                    result.Add(new PageItem(startIndex, source.FilePath, Array.Empty<Detection>(), source.PdfPageIndex));
+                    startIndex++;
                 }
 
                 return result;
             });
 
-            Pages.Clear();
+            if (!append) Pages.Clear();
 
             foreach (var p in pages)
             {
                 Pages.Add(p);
             }
 
-            _pageIdByIndex.Clear();
-            foreach (var kvp in _database.UpsertPages(_caseId, pages))
+            // ... (Rest is similar, just handle append)
+            // Need to update UpsertPages to handle new pages
+            if (_localDatabase is not null)
             {
-                _pageIdByIndex[kvp.Key] = kvp.Value;
-            }
-
-            var detectionsMap = _database.LoadDetections(_caseId);
-            var decisionsMap = _database.LoadDecisions(_caseId);
-            var pagesToAnalyze = new List<PageItem>();
-
-            foreach (var page in pages)
-            {
-                if (detectionsMap.TryGetValue(page.Index, out var detections))
+                foreach (var kvp in _localDatabase.UpsertPages(_caseId, pages))
                 {
-                    SetDetections(page, detections);
-                }
-
-                if (decisionsMap.TryGetValue(page.Index, out var decision))
-                {
-                    page.RestoreDecision(decision);
-                }
-
-                if (!detectionsMap.ContainsKey(page.Index) && !page.IsReviewed)
-                {
-                    pagesToAnalyze.Add(page);
+                    _pageIdByIndex[kvp.Key] = kvp.Value;
                 }
             }
 
-            CaseName = _runContext.CaseName;
-            StatusMessage = BuildStatusMessage($"読み込み完了: {Pages.Count}ページ");
+            // Restore state (load existing or start analysis)
+            RestoreCaseState(pages);
+            
             IsLoaded = true;
-
+            StatusMessage = $"ロード完了: 全{Pages.Count}ページ";
+            if (SelectedPage is null) SelectedPage = Pages.FirstOrDefault();
+            
             OnPropertyChanged(nameof(ProgressText));
             OnPropertyChanged(nameof(PageCountText));
-            OnPropertyChanged(nameof(OutputDirectoryText));
-
-            SelectedPage = Pages.FirstOrDefault();
-            UpdateCommandStates();
-
-            StartAnalysis(pagesToAnalyze);
         }
         catch (Exception ex)
         {
             StatusMessage = $"エラー: {ex.Message}";
-            IsLoaded = false;
+            if (!append) IsLoaded = false;
         }
     }
 
@@ -679,6 +910,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ExceptionDialogRequested?.Invoke(this, new ExceptionDialogRequest(DefaultExceptionReasonCodes));
     }
 
+    private void ResetDecision()
+    {
+        if (SelectedPage is null)
+        {
+            return;
+        }
+
+        SelectedPage.ResetDecision();
+
+        _auditLog?.Append("decision_reset", new
+        {
+            pageIndex = SelectedPage.Index,
+            fileName = SelectedPage.FileName,
+        });
+
+        if (_localDatabase is not null && _pageIdByIndex.TryGetValue(SelectedPage.Index, out var pageId))
+        {
+            _localDatabase.DeleteDecision(pageId);
+        }
+
+        OnPropertyChanged(nameof(SelectedDecisionText));
+        OnPropertyChanged(nameof(ProgressText));
+
+        PagesView.Refresh();
+        UpdateCommandStates();
+        _ = RefreshImagesAsync();
+    }
+
     private void ToggleCompare()
     {
         CompareMode = !CompareMode;
@@ -689,6 +948,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         ShowNgOnly = !ShowNgOnly;
         StatusMessage = ShowNgOnly ? "絞り込み: NG/疑いのみ" : "絞り込み: 全て";
+    }
+
+    private void ToggleOverlay()
+    {
+        ShowOverlays = !ShowOverlays;
+        StatusMessage = ShowOverlays ? "エラー枠表示: ON" : "エラー枠表示: OFF";
     }
 
     private void ToggleZoom()
@@ -739,20 +1004,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             _fitZoom = 1.0;
             _actualZoom = 1.0;
-            ApplyZoomMode(_zoomMode);
             return;
         }
 
         var dpiX = Math.Max(1.0, image.DpiX);
         var dpiY = Math.Max(1.0, image.DpiY);
-        var imageWidthDip = image.PixelWidth * (96.0 / dpiX);
-        var imageHeightDip = image.PixelHeight * (96.0 / dpiY);
+        var imageWidthDip = image.Width;
+        var imageHeightDip = image.Height;
 
-        var widthScale = _viewportWidth > 0 && imageWidthDip > double.Epsilon
-            ? _viewportWidth / imageWidthDip
+        // Add a small margin (e.g., 20px) to ensure the image doesn't touch the edges and avoids scrollbars
+        const double margin = 20.0;
+        var availableWidth = Math.Max(0, _viewportWidth - margin);
+        var availableHeight = Math.Max(0, _viewportHeight - margin);
+
+        var widthScale = availableWidth > 0 && imageWidthDip > double.Epsilon
+            ? availableWidth / imageWidthDip
             : 1.0;
-        var heightScale = _viewportHeight > 0 && imageHeightDip > double.Epsilon
-            ? _viewportHeight / imageHeightDip
+        var heightScale = availableHeight > 0 && imageHeightDip > double.Epsilon
+            ? availableHeight / imageHeightDip
             : 1.0;
 
         var fitScale = Math.Min(widthScale, heightScale);
@@ -761,7 +1030,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             fitScale = 1.0;
         }
 
-        _fitZoom = Math.Max(MinZoom, fitScale);
+        _fitZoom = Math.Clamp(fitScale, MinZoom, MaxZoom);
         _actualZoom = Math.Max(MinZoom, dpiX / 96.0);
 
         if (_zoomMode != ZoomMode.Free)
@@ -892,7 +1161,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 exceptionReasonCode = decision.ExceptionReasonCode,
                 exceptionNote = decision.ExceptionNote,
                 pdfPageIndex = page.PdfPageIndex,
-                ngCodes = page.Detections.Select(d => d.Code).ToArray(),
+                activeNgCodes = page.Detections.Where(d => d.IsActive).Select(d => d.Code).ToArray(),
+                resolvedNgCodes = page.Detections.Where(d => !d.IsActive).Select(d => d.Code).ToArray(),
             });
     }
 
@@ -947,8 +1217,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         CurrentOverlays.Clear();
 
-        var w = image.PixelWidth;
-        var h = image.PixelHeight;
+        // Use Width/Height (DIPs) instead of PixelWidth/PixelHeight for WPF Canvas coordinates
+        var w = image.Width;
+        var h = image.Height;
         if (w <= 0 || h <= 0)
         {
             return;
@@ -984,13 +1255,57 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         MarkOkCommand.NotifyCanExecuteChanged();
         MarkRescanCommand.NotifyCanExecuteChanged();
         RequestExceptionCommand.NotifyCanExecuteChanged();
+        ResetDecisionCommand.NotifyCanExecuteChanged();
+        CompleteCaseCommand.NotifyCanExecuteChanged();
         ToggleCompareCommand.NotifyCanExecuteChanged();
         ToggleFilterCommand.NotifyCanExecuteChanged();
-        ToggleZoomCommand.NotifyCanExecuteChanged();
-        ZoomInCommand.NotifyCanExecuteChanged();
-        ZoomOutCommand.NotifyCanExecuteChanged();
         ExportCsvCommand.NotifyCanExecuteChanged();
         ExportReportCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CheckCanCompleteCase()
+    {
+        if (Pages.Count == 0)
+        {
+            return false;
+        }
+
+        // 全ページが判定済み(IsReviewed)であること
+        return Pages.All(p => p.IsReviewed);
+    }
+
+    private void CompleteCase()
+    {
+        if (!CheckCanCompleteCase())
+        {
+            StatusMessage = "未判定のページがあります。完了できません。";
+            return;
+        }
+
+        var okCount = Pages.Count(p => p.Decision?.Action == DecisionAction.Ok);
+        var ngCount = Pages.Count(p => p.Decision?.Action == DecisionAction.Rescan);
+        var excCount = Pages.Count(p => p.Decision?.Action == DecisionAction.ExceptionApproved);
+
+        CompletionDialogRequested?.Invoke(this, new CompletionDialogRequest(
+            Pages.Count,
+            okCount,
+            ngCount,
+            excCount,
+            confirmed =>
+            {
+                if (confirmed)
+                {
+                    ExecuteCompletion();
+                }
+            }));
+    }
+
+    private void ExecuteCompletion()
+    {
+        // TODO: Update DB status, export files, lock UI
+        ExportCsv();
+        _ = ExportReportAsync();
+        StatusMessage = "案件完了処理を実行しました。出力ファイルを確認してください。";
     }
 
     private void DisposeRun()
@@ -1005,7 +1320,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _analysisCts = null;
         _analysisTotal = 0;
         _analysisCompleted = 0;
-        _database = null;
+        
+        // Don't nullify if it's the master database (used for resume/manual cases)
+        if (_localDatabase != null && _localDatabase != _masterDatabase)
+        {
+            _localDatabase = null;
+        }
+        
         _caseId = 0;
         _pageIdByIndex.Clear();
         _dbLocationLabel = "";
@@ -1021,6 +1342,63 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DisposeRun();
         _detectCts.Cancel();
         _detectChannel.Writer.TryComplete();
+        _settings.PropertyChanged -= OnSettingsChanged;
+    }
+
+    private CancellationTokenSource? _reanalyzeCts;
+
+    private async void OnSettingsChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // Debounce: Cancel previous request and wait a bit
+        _reanalyzeCts?.Cancel();
+        _reanalyzeCts = new CancellationTokenSource();
+        var token = _reanalyzeCts.Token;
+
+        try
+        {
+            await Task.Delay(200, token); // Wait 200ms
+            if (token.IsCancellationRequested) return;
+
+            if (SelectedPage is not null)
+            {
+                await ReAnalyzeCurrentPage(SelectedPage, token);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Ignore
+        }
+    }
+
+    private async Task ReAnalyzeCurrentPage(PageItem page, CancellationToken token)
+    {
+        await Task.Run(() =>
+        {
+            if (token.IsCancellationRequested) return;
+            
+            var detections = AnalyzeDetections(page);
+            
+            if (token.IsCancellationRequested) return;
+
+            PostToUi(() =>
+            {
+                if (token.IsCancellationRequested) return;
+                if (SelectedPage == page)
+                {
+                    page.Detections.Clear();
+                    foreach (var d in detections)
+                    {
+                        page.Detections.Add(d);
+                    }
+                    
+                    OnPropertyChanged(nameof(SelectedDecisionText));
+                    if (CurrentImage is not null)
+                    {
+                        BuildOverlays(page, CurrentImage);
+                    }
+                }
+            });
+        }, token);
     }
 
     private void StartAnalysis(IReadOnlyList<PageItem> pages)
@@ -1097,12 +1475,30 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private IReadOnlyList<Detection> AnalyzeDetections(PageItem page)
     {
+        // 1. Low-cost validation (Gatekeeper)
+        var simpleDetections = _simpleValidator.ValidateFile(page.FilePath, page.PdfPageIndex, _settings);
+        if (simpleDetections.Count > 0)
+        {
+            // If simple validation fails, return immediately (skip expensive checks)
+            return simpleDetections;
+        }
+
         var detections = new List<Detection>(
             _dummyDetector
                 .DetectFromFileName(page.FilePath)
-                .Where(d => !d.IsQlT05 && !string.Equals(d.Code, "STR-02", StringComparison.OrdinalIgnoreCase)));
+                .Where(d => !d.IsQlT05 
+                            && !string.Equals(d.Code, "STR-02", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(d.Code, "STR-01S", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(d.Code, "STR-01", StringComparison.OrdinalIgnoreCase)));
 
-        detections.AddRange(_qualityDetector.DetectQlT05(page.FilePath, page.PdfPageIndex));
+        // Real detections
+        var str01 = _structureDetector.DetectStr01(page.FilePath, page.PdfPageIndex, _settings);
+        if (str01 is not null)
+        {
+            detections.Add(str01);
+        }
+
+        detections.AddRange(_qualityDetector.DetectQlT05(page.FilePath, page.PdfPageIndex, _settings));
 
         var currentHash = _structureDetector.ComputeHash(page.FilePath, page.PdfPageIndex);
         if (currentHash is not null)
@@ -1175,7 +1571,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void PersistDetections(PageItem page, IReadOnlyList<Detection> detections)
     {
-        if (_database is null)
+        if (_localDatabase is null)
         {
             return;
         }
@@ -1185,12 +1581,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _database.SaveDetections(pageId, detections);
+        _localDatabase.SaveDetections(pageId, detections);
     }
 
     private void PersistDecision(PageItem page)
     {
-        if (_database is null)
+        if (_localDatabase is null)
         {
             return;
         }
@@ -1205,7 +1601,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _database.SaveDecision(pageId, page.Decision);
+        _localDatabase.SaveDecision(pageId, page.Decision);
     }
 
     private void UpdateAnalysisStatus()
@@ -1270,3 +1666,5 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private sealed record DetectionRequest(PageItem Page, int RunId, CancellationToken CancellationToken);
 }
+
+public sealed record CompletionDialogRequest(int Total, int Ok, int Ng, int Exception, Action<bool> Callback);

@@ -2,10 +2,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
 
-namespace KenpinTool.Prototype.Views;
+namespace KenpinTool.Prototype;
 
 public partial class MainWindow : Window
 {
@@ -15,7 +14,12 @@ public partial class MainWindow : Window
         DataContext = viewModel;
 
         viewModel.ExceptionDialogRequested += ViewModel_ExceptionDialogRequested;
-        Closed += (s, e) => viewModel.ExceptionDialogRequested -= ViewModel_ExceptionDialogRequested;
+        viewModel.CompletionDialogRequested += ViewModel_CompletionDialogRequested;
+        Closed += (s, e) =>
+        {
+            viewModel.ExceptionDialogRequested -= ViewModel_ExceptionDialogRequested;
+            viewModel.CompletionDialogRequested -= ViewModel_CompletionDialogRequested;
+        };
         PreviewGotKeyboardFocus += OnPreviewKeyboardFocusChanged;
         PreviewLostKeyboardFocus += OnPreviewKeyboardFocusChanged;
         Loaded += OnLoaded;
@@ -35,6 +39,18 @@ public partial class MainWindow : Window
                 vm.ApplyExceptionDecision(dialog.SelectedReasonCode, dialog.Note);
             }
         }
+    }
+
+    private void ViewModel_CompletionDialogRequested(object? sender, CompletionDialogRequest e)
+    {
+        var vm = new CompletionViewModel(e.Total, e.Ok, e.Ng, e.Exception);
+        var dialog = new CompletionDialog(vm)
+        {
+            Owner = this
+        };
+
+        dialog.ShowDialog();
+        e.Callback(vm.DialogResult);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -88,8 +104,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var width = ImageScrollHost.ViewportWidth > 0 ? ImageScrollHost.ViewportWidth : ImageScrollHost.ActualWidth;
-        var height = ImageScrollHost.ViewportHeight > 0 ? ImageScrollHost.ViewportHeight : ImageScrollHost.ActualHeight;
+        var width = ImageScrollHost.ActualWidth;
+        var height = ImageScrollHost.ActualHeight;
         vm.UpdateViewportSize(width, height);
     }
 

@@ -1,0 +1,52 @@
+<Window x:Class="KenpinTool.Prototype.CompletionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:viewmodels="clr-namespace:KenpinTool.Prototype"
+        mc:Ignorable="d"
+        Title="案件完了確認" Height="300" Width="400"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="すべてのページの判定が完了しました。" FontSize="16" FontWeight="Bold" Margin="0,0,0,20"/>
+
+        <Grid Grid.Row="1" Margin="10,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="総ページ数:" Margin="0,5"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding TotalCount}" FontWeight="Bold" Margin="0,5"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="OK:" Margin="0,5"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding OkCount}" Foreground="Green" FontWeight="Bold" Margin="0,5"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="NG-A (再スキャン):" Margin="0,5"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding NgCount}" Foreground="Red" FontWeight="Bold" Margin="0,5"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="例外承認 (NG-B/C):" Margin="0,5"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ExceptionCount}" Foreground="Orange" FontWeight="Bold" Margin="0,5"/>
+        </Grid>
+
+        <StackPanel Grid.Row="2" Orientation="Vertical">
+            <TextBlock Text="完了すると、自動的にCSVとレポートPDFが出力されます。" TextWrapping="Wrap" Foreground="Gray" Margin="0,10"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="キャンセル" Command="{Binding CancelCommand}" Width="100" Margin="0,0,10,0" IsCancel="True"/>
+                <Button Content="完了して出力" Command="{Binding ConfirmCommand}" Width="120" IsDefault="True"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
